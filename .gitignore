@@ -1,0 +1,23 @@
+# Polymarket database files (stored outside repo in ../PolyMarketData/)
+*.duckdb
+*.duckdb.wal
+database/
+
+# Parquet archive files (stored outside repo in ../PolyMarketData/archive/)
+*.parquet
+archive/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log

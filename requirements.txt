@@ -1,0 +1,4 @@
+# Polymarket Data Pipeline Dependencies
+duckdb>=0.9.0
+httpx>=0.25.0
+pyarrow>=14.0.0
