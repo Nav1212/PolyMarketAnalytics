@@ -18,19 +18,38 @@ def backfill_markets(conn: duckdb.DuckDBPyConnection,
                      client: PolymarketClient) -> int:
     """
     Backfill all markets into stg_markets_raw.
+    Skips markets already in staging or gold layer.
     
     Args:
         conn: DuckDB connection
         client: Polymarket API client
         
     Returns:
-        Number of markets loaded
+        Number of NEW markets loaded
     """
     print("\n" + "="*60)
     print("BACKFILLING MARKETS")
     print("="*60)
     
+    # Get existing market IDs from staging and gold layers
+    existing_staging = set(row[0] for row in conn.execute(
+        "SELECT condition_id FROM stg_markets_raw"
+    ).fetchall())
+    
+    # Check if gold layer exists and get IDs
+    existing_gold = set()
+    try:
+        existing_gold = set(row[0] for row in conn.execute(
+            "SELECT condition_id FROM MarketDim"
+        ).fetchall())
+    except:
+        pass  # Gold table may not exist yet
+    
+    existing_ids = existing_staging | existing_gold
+    print(f"  Found {len(existing_ids):,} markets already in database")
+    
     count = 0
+    skipped = 0
     batch = []
     batch_size = 50
     
@@ -39,19 +58,25 @@ def backfill_markets(conn: duckdb.DuckDBPyConnection,
         if not condition_id:
             continue
         
+        # Skip if already exists
+        if condition_id in existing_ids:
+            skipped += 1
+            continue
+        
         batch.append((condition_id, json.dumps(market), "gamma_api"))
+        existing_ids.add(condition_id)  # Track for deduplication within batch
         count += 1
         
         if len(batch) >= batch_size:
             _insert_markets_batch(conn, batch)
-            print(f"  Loaded {count} markets...")
+            print(f"  Loaded {count} new markets (skipped {skipped} existing)...")
             batch = []
     
     # Insert remaining
     if batch:
         _insert_markets_batch(conn, batch)
     
-    print(f"✓ Loaded {count} markets into stg_markets_raw")
+    print(f"✓ Loaded {count} new markets (skipped {skipped} existing)")
     return count
 
 
@@ -71,7 +96,8 @@ def backfill_prices(conn: duckdb.DuckDBPyConnection,
                     fidelity_minutes: int = 60,
                     limit_markets: Optional[int] = None) -> int:
     """
-    Backfill hourly price history for all markets.
+    Backfill hourly price history for markets without price data.
+    Skips markets that already have prices in staging or gold layer.
     
     Args:
         conn: DuckDB connection
@@ -86,18 +112,41 @@ def backfill_prices(conn: duckdb.DuckDBPyConnection,
     print("BACKFILLING HOURLY PRICES")
     print("="*60)
     
-    # Get all markets from staging
+    # Get markets that already have price data
+    markets_with_prices_staging = set(row[0] for row in conn.execute(
+        "SELECT DISTINCT condition_id FROM stg_prices_raw"
+    ).fetchall())
+    
+    # Check gold layer
+    markets_with_prices_gold = set()
+    try:
+        # Get condition_ids from markets that have price facts
+        markets_with_prices_gold = set(row[0] for row in conn.execute("""
+            SELECT DISTINCT m.condition_id 
+            FROM HourlyPriceFact f
+            JOIN TokenDim t ON f.token_id = t.token_id
+            JOIN MarketDim m ON t.market_id = m.market_id
+        """).fetchall())
+    except:
+        pass  # Gold tables may not exist yet
+    
+    markets_with_prices = markets_with_prices_staging | markets_with_prices_gold
+    print(f"  Found {len(markets_with_prices):,} markets already have price data")
+    
+    # Get all markets from staging, excluding those with prices
     markets = conn.execute("""
         SELECT condition_id, raw_json 
         FROM stg_markets_raw
+        WHERE condition_id NOT IN (SELECT DISTINCT condition_id FROM stg_prices_raw)
     """).fetchall()
     
     if limit_markets:
         markets = markets[:limit_markets]
     
-    print(f"Processing {len(markets)} markets...")
+    print(f"  Processing {len(markets)} markets needing price data...")
     
     total_prices = 0
+    skipped = 0
     
     for i, (condition_id, raw_json) in enumerate(markets):
         market = json.loads(raw_json)
@@ -154,25 +203,62 @@ def backfill_trades_november_2024(conn: duckdb.DuckDBPyConnection,
                                    client: PolymarketClient) -> int:
     """
     Backfill trades for November 2024 only.
+    Skips trades that already exist in staging or gold layer.
     
     Args:
         conn: DuckDB connection
         client: Polymarket API client
         
     Returns:
-        Number of trades loaded
+        Number of NEW trades loaded
     """
     print("\n" + "="*60)
     print("BACKFILLING NOVEMBER 2024 TRADES")
     print("="*60)
     
     # November 2024 range
-    start_ts = timestamp_to_unix(datetime(2024, 11, 1, 0, 0, 0, tzinfo=timezone.utc))
-    end_ts = timestamp_to_unix(datetime(2024, 11, 30, 23, 59, 59, tzinfo=timezone.utc))
+    start_dt = datetime(2024, 11, 1, 0, 0, 0, tzinfo=timezone.utc)
+    end_dt = datetime(2024, 11, 30, 23, 59, 59, tzinfo=timezone.utc)
+    start_ts = timestamp_to_unix(start_dt)
+    end_ts = timestamp_to_unix(end_dt)
     
     print(f"Date range: 2024-11-01 to 2024-11-30")
     
+    # Build set of existing trade signatures from staging
+    # Use (condition_id, timestamp) as a quick lookup key
+    print("  Loading existing trade timestamps from staging...")
+    existing_trades = set()
+    try:
+        rows = conn.execute("""
+            SELECT condition_id, trade_timestamp 
+            FROM stg_trades_raw 
+            WHERE trade_timestamp >= ? AND trade_timestamp <= ?
+        """, [start_dt, end_dt]).fetchall()
+        for cid, ts in rows:
+            existing_trades.add((cid, ts))
+    except:
+        pass
+    
+    # Also check gold layer - use (token_id, trade_ts, price, size) composite key
+    # But we need condition_id for API matching, so build a timestamp set
+    print("  Loading existing trade timestamps from gold layer...")
+    try:
+        rows = conn.execute("""
+            SELECT m.external_id, f.trade_ts
+            FROM TradeFact f
+            JOIN TokenDim t ON f.token_id = t.token_id
+            JOIN MarketDim m ON t.market_id = m.market_id
+            WHERE f.trade_ts >= ? AND f.trade_ts <= ?
+        """, [start_dt, end_dt]).fetchall()
+        for cid, ts in rows:
+            existing_trades.add((cid, ts))
+    except:
+        pass
+    
+    print(f"  Found {len(existing_trades):,} existing trades for this period")
+    
     count = 0
+    skipped = 0
     batch = []
     batch_size = 100
     
@@ -189,21 +275,28 @@ def backfill_trades_november_2024(conn: duckdb.DuckDBPyConnection,
         else:
             trade_dt = datetime.fromisoformat(trade_ts.replace("Z", "+00:00"))
         
+        # Skip if already exists
+        trade_key = (condition_id, trade_dt)
+        if trade_key in existing_trades:
+            skipped += 1
+            continue
+        
         batch.append((condition_id, json.dumps(trade), trade_dt))
+        existing_trades.add(trade_key)  # Track to avoid dupes within batch
         count += 1
         
         if len(batch) >= batch_size:
             _insert_trades_batch(conn, batch)
             batch = []
             
-            if count % 1000 == 0:
-                print(f"  Loaded {count:,} trades...")
+            if count % 10000 == 0:
+                print(f"  Loaded {count:,} new trades (skipped {skipped:,} existing)...")
     
     # Insert remaining
     if batch:
         _insert_trades_batch(conn, batch)
     
-    print(f"✓ Loaded {count:,} trades for November 2024")
+    print(f"✓ Loaded {count:,} new trades (skipped {skipped:,} existing)")
     return count
 
 

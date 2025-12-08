@@ -173,23 +173,21 @@ def create_database(db_path: str = None) -> duckdb.DuckDBPyConnection:
         ON HourlyPriceFact(snapshot_hour)
     """)
     
-    # TradeFact - Trade facts
+    # TradeFact - Trade facts (no synthetic trade_id for storage efficiency)
+    # Composite primary key: same token + timestamp + price + size = same trade
     conn.execute("""
         CREATE TABLE IF NOT EXISTS TradeFact (
-            trade_id        INTEGER PRIMARY KEY,
             token_id        INTEGER NOT NULL REFERENCES TokenDim(token_id),
             trade_ts        TIMESTAMP NOT NULL,
             price           REAL NOT NULL,
             size            REAL NOT NULL,
-            side            bit NOT NULL
+            side            BIT NOT NULL,
+            PRIMARY KEY (token_id, trade_ts, price, size)
         )
     """)
     # side: bit (1=buy, 0=sell) for storage efficiency
+    # ~21 bytes per row vs ~25 with synthetic trade_id
     
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_trade_token 
-        ON TradeFact(token_id)
-    """)
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_trade_ts 
         ON TradeFact(trade_ts)

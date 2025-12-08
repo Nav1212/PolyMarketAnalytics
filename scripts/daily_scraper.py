@@ -19,6 +19,7 @@ def scrape_daily_prices(conn: duckdb.DuckDBPyConnection,
                         target_date: datetime = None) -> int:
     """
     Scrape hourly prices for a specific date (default: yesterday).
+    Skips tokens that already have price data for this date.
     
     Args:
         conn: DuckDB connection
@@ -36,10 +37,31 @@ def scrape_daily_prices(conn: duckdb.DuckDBPyConnection,
     
     start_ts = timestamp_to_unix(target_date)
     end_ts = timestamp_to_unix(target_date + timedelta(days=1) - timedelta(seconds=1))
+    start_dt = target_date
+    end_dt = target_date + timedelta(days=1) - timedelta(seconds=1)
     
     print(f"Scraping prices for: {target_date.date()}")
     print(f"  Start: {start_ts} ({target_date.isoformat()})")
     print(f"  End: {end_ts}")
+    
+    # Get tokens that already have data for this date range
+    existing_tokens = set(row[0] for row in conn.execute("""
+        SELECT DISTINCT token_id FROM stg_prices_raw
+        WHERE start_ts <= ? AND end_ts >= ?
+    """, [end_dt, start_dt]).fetchall())
+    
+    # Also check gold layer
+    try:
+        gold_tokens = set(row[0] for row in conn.execute("""
+            SELECT DISTINCT t.clob_token_id FROM HourlyPriceFact f
+            JOIN TokenDim t ON f.token_id = t.token_id
+            WHERE f.snapshot_hour >= ? AND f.snapshot_hour <= ?
+        """, [start_dt, end_dt]).fetchall())
+        existing_tokens |= gold_tokens
+    except:
+        pass
+    
+    print(f"  Found {len(existing_tokens)} tokens already have data for this date")
     
     # Get active markets from staging
     markets = conn.execute("""
@@ -61,6 +83,7 @@ def scrape_daily_prices(conn: duckdb.DuckDBPyConnection,
     print(f"Processing {len(markets)} markets...")
     
     total_prices = 0
+    skipped_tokens = 0
     
     for i, (condition_id, raw_json) in enumerate(markets):
         market = json.loads(raw_json)
@@ -75,6 +98,11 @@ def scrape_daily_prices(conn: duckdb.DuckDBPyConnection,
                 token_id = str(token)
             
             if not token_id:
+                continue
+            
+            # Skip if already have data for this token
+            if token_id in existing_tokens:
+                skipped_tokens += 1
                 continue
             
             # Fetch hourly prices for this day
@@ -105,11 +133,12 @@ def scrape_daily_prices(conn: duckdb.DuckDBPyConnection,
                 ])
                 
                 total_prices += len(history)
+                existing_tokens.add(token_id)  # Track to avoid re-fetching
         
         if (i + 1) % 100 == 0:
             print(f"  Processed {i + 1}/{len(markets)} markets...")
     
-    print(f"✓ Loaded {total_prices:,} price points for {target_date.date()}")
+    print(f"✓ Loaded {total_prices:,} price points for {target_date.date()} (skipped {skipped_tokens} tokens with existing data)")
     return total_prices
 
 
