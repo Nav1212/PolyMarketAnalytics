@@ -8,11 +8,12 @@ The staging layer stores raw JSON - you parse it into normalized dimensions.
 Snowflake Schema Flow:
   stg_markets_raw -> CategoryDim -> EventDim -> MarketDim -> TokenDim
   stg_prices_raw  -> HourlyPriceFact (with timestamp, no date FK)
-  stg_trades_raw  -> TradeFact (with timestamp, side as bit)
+  stg_trades_raw  -> TraderDim -> TradeFact (with maker/taker FKs)
 
 Storage Optimizations:
   - outcome: bit (1=YES, 0=NO) instead of TEXT or FK
   - side: bit (1=buy, 0=sell) instead of TEXT
+  - maker/taker: INTEGER FK to TraderDim (8 bytes vs 84 bytes for addresses)
   - price/size: REAL (4 bytes) instead of DOUBLE (8 bytes)
   - No dim_date: timestamps stored directly
 """
@@ -223,17 +224,52 @@ def transform_prices(conn: duckdb.DuckDBPyConnection) -> int:
     return count
 
 
+def transform_traders(conn: duckdb.DuckDBPyConnection) -> int:
+    """
+    Transform stg_trades_raw → TraderDim
+    
+    Extracts unique wallet addresses (maker/taker) from trades.
+    Converts hex addresses to BLOB (20 bytes vs 42 bytes TEXT).
+    Must run before transform_trades().
+    """
+    print("Transforming traders...")
+    
+    # Extract unique maker/taker addresses, convert hex to BLOB
+    # decode(substring(addr, 3), 'hex') removes '0x' prefix and converts to bytes
+    conn.execute("""
+        INSERT INTO TraderDim (wallet_address)
+        SELECT DISTINCT decode(substring(wallet, 3), 'hex') FROM (
+            SELECT json_extract_string(raw_json, '$.maker') as wallet
+            FROM stg_trades_raw
+            WHERE json_extract_string(raw_json, '$.maker') IS NOT NULL
+              AND length(json_extract_string(raw_json, '$.maker')) = 42
+            UNION
+            SELECT json_extract_string(raw_json, '$.taker') as wallet
+            FROM stg_trades_raw
+            WHERE json_extract_string(raw_json, '$.taker') IS NOT NULL
+              AND length(json_extract_string(raw_json, '$.taker')) = 42
+        )
+        WHERE wallet IS NOT NULL
+          AND decode(substring(wallet, 3), 'hex') NOT IN (SELECT wallet_address FROM TraderDim)
+    """)
+    
+    count = conn.execute("SELECT changes()").fetchone()[0]
+    print(f"✓ Inserted {count} traders into TraderDim")
+    return count
+
+
 def transform_trades(conn: duckdb.DuckDBPyConnection) -> int:
     """
     Transform stg_trades_raw → TradeFact
     
     Parses trade JSON into fact records.
-    Uses trade_ts TIMESTAMP and side as bit (1=buy, 0=sell).
+    Uses trade_ts TIMESTAMP, side as bit (1=buy, 0=sell).
+    Links maker/taker via TraderDim FKs (addresses stored as BLOB).
     """
     print("Transforming trades...")
     
     result = conn.execute("""
-        INSERT INTO TradeFact (token_id, trade_ts, price, size, side)
+        INSERT INTO TradeFact (token_id, trade_ts, price, size, side, maker_id, taker_id)
         SELECT 
             dt.token_id,
             s.trade_timestamp as trade_ts,
@@ -243,15 +279,19 @@ def transform_trades(conn: duckdb.DuckDBPyConnection) -> int:
                 WHEN 'BUY' THEN 1
                 WHEN 'SELL' THEN 0
                 ELSE 0
-            END as side
+            END as side,
+            maker.trader_id as maker_id,
+            taker.trader_id as taker_id
         FROM stg_trades_raw s
-        JOIN MarketDim m ON m.condition_id = s.condition_id
+        JOIN MarketDim m ON m.external_id = s.condition_id
         JOIN TokenDim dt ON dt.market_id = m.market_id
             AND dt.outcome = CASE 
                 WHEN UPPER(json_extract_string(s.raw_json, '$.outcome')) = 'YES' THEN 1
                 WHEN UPPER(json_extract_string(s.raw_json, '$.outcome')) = 'NO' THEN 0
                 ELSE dt.outcome
             END
+        LEFT JOIN TraderDim maker ON maker.wallet_address = decode(substring(json_extract_string(s.raw_json, '$.maker'), 3), 'hex')
+        LEFT JOIN TraderDim taker ON taker.wallet_address = decode(substring(json_extract_string(s.raw_json, '$.taker'), 3), 'hex')
         WHERE json_extract(s.raw_json, '$.price') IS NOT NULL
     """)
     
@@ -341,6 +381,7 @@ def run_full_transform(db_path: str = None,
     transform_markets(conn)
     transform_tokens(conn)
     transform_prices(conn)
+    transform_traders(conn)  # Must be before trades
     transform_trades(conn)
     
     # Cleanup staging
@@ -353,7 +394,7 @@ def run_full_transform(db_path: str = None,
     print("="*60)
     
     for table in ["CategoryDim", "EventDim", "MarketDim", 
-                  "TokenDim", "HourlyPriceFact", "TradeFact"]:
+                  "TokenDim", "TraderDim", "HourlyPriceFact", "TradeFact"]:
         count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         print(f"  {table}: {count:,} rows")
     

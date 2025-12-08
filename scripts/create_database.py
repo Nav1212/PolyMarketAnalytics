@@ -151,6 +151,18 @@ def create_database(db_path: str = None) -> duckdb.DuckDBPyConnection:
         )
     """)
     
+    # TraderDim - Trader/wallet dimension (normalized to save storage)
+    # Stores wallet address as BLOB(20) - raw bytes, not hex string
+    # 20 bytes vs 42 bytes for TEXT hex representation (52% savings)
+    # Saves ~80 bytes per trade vs storing maker+taker addresses directly
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS TraderDim (
+            trader_id       INTEGER PRIMARY KEY,
+            wallet_address  BLOB NOT NULL UNIQUE,
+            first_seen      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
     # HourlyPriceFact - Hourly price facts
     # No dim_date join - store timestamp directly (more efficient for DuckDB)
     # DuckDB can extract date parts on-the-fly very efficiently
@@ -175,6 +187,7 @@ def create_database(db_path: str = None) -> duckdb.DuckDBPyConnection:
     
     # TradeFact - Trade facts (no synthetic trade_id for storage efficiency)
     # Composite primary key: same token + timestamp + price + size = same trade
+    # maker_id/taker_id reference TraderDim (4 bytes each vs 42 bytes for address)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS TradeFact (
             token_id        INTEGER NOT NULL REFERENCES TokenDim(token_id),
@@ -182,15 +195,27 @@ def create_database(db_path: str = None) -> duckdb.DuckDBPyConnection:
             price           REAL NOT NULL,
             size            REAL NOT NULL,
             side            BIT NOT NULL,
+            maker_id        INTEGER REFERENCES TraderDim(trader_id),
+            taker_id        INTEGER REFERENCES TraderDim(trader_id),
             PRIMARY KEY (token_id, trade_ts, price, size)
         )
     """)
     # side: bit (1=buy, 0=sell) for storage efficiency
-    # ~21 bytes per row vs ~25 with synthetic trade_id
+    # ~29 bytes per row (was ~21 without trader tracking)
     
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_trade_ts 
         ON TradeFact(trade_ts)
+    """)
+    
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_trade_maker 
+        ON TradeFact(maker_id)
+    """)
+    
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_trade_taker 
+        ON TradeFact(taker_id)
     """)
 
     print("✓ Gold layer created")
@@ -242,7 +267,7 @@ def get_table_stats(conn: duckdb.DuckDBPyConnection) -> dict:
     """Get row counts for all tables"""
     tables = [
         'stg_markets_raw', 'stg_prices_raw', 'stg_trades_raw',
-        'CategoryDim', 'EventDim', 'MarketDim', 'TokenDim',
+        'CategoryDim', 'EventDim', 'MarketDim', 'TokenDim', 'TraderDim',
         'HourlyPriceFact', 'TradeFact'
     ]
     
@@ -272,6 +297,7 @@ def print_schema_summary(conn: duckdb.DuckDBPyConnection):
     
     print("\nGold Layer (Lookup Dimensions):")
     print(f"  CategoryDim:        {stats['CategoryDim']:>10,} rows")
+    print(f"  TraderDim:          {stats['TraderDim']:>10,} rows")
     
     print("\nGold Layer (Main Dimensions):")
     print(f"  EventDim:           {stats['EventDim']:>10,} rows")
@@ -286,6 +312,7 @@ def print_schema_summary(conn: duckdb.DuckDBPyConnection):
     print("\n" + "-"*60)
     print("Storage Optimizations:")
     print("  ✓ CategoryDim: Normalized (vs repeated TEXT)")
+    print("  ✓ TraderDim: BLOB addresses (20 bytes vs 42 TEXT, 8 byte FK per trade)")
     print("  ✓ outcome: bit (1 bit vs 'Yes'/'No' TEXT ~3 bytes)")
     print("  ✓ side: bit (1 bit vs 'buy'/'sell' TEXT ~4 bytes)")
     print("  ✓ No dim_date: Timestamps computed on-the-fly")
