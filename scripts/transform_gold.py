@@ -26,6 +26,11 @@ from typing import Optional
 from create_database import DEFAULT_DB_PATH
 
 
+def _count_table(conn: duckdb.DuckDBPyConnection, table: str) -> int:
+    """Get current row count for a table"""
+    return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+
 def transform_categories(conn: duckdb.DuckDBPyConnection) -> int:
     """
     Transform stg_markets_raw → CategoryDim
@@ -35,10 +40,13 @@ def transform_categories(conn: duckdb.DuckDBPyConnection) -> int:
     """
     print("Transforming categories...")
     
-    result = conn.execute("""
+    before = _count_table(conn, "CategoryDim")
+    max_id = conn.execute("SELECT COALESCE(MAX(category_id), 0) FROM CategoryDim").fetchone()[0]
+    
+    conn.execute("""
         INSERT INTO CategoryDim (category_id, category_name)
-        SELECT DISTINCT
-            ROW_NUMBER() OVER (ORDER BY category) as category_id,
+        SELECT
+            ? + ROW_NUMBER() OVER (ORDER BY category) as category_id,
             category
         FROM (
             SELECT DISTINCT COALESCE(
@@ -49,9 +57,9 @@ def transform_categories(conn: duckdb.DuckDBPyConnection) -> int:
             FROM stg_markets_raw
         )
         WHERE category NOT IN (SELECT category_name FROM CategoryDim)
-    """)
+    """, [max_id])
     
-    count = conn.execute("SELECT changes()").fetchone()[0]
+    count = _count_table(conn, "CategoryDim") - before
     print(f"✓ Inserted {count} categories into CategoryDim")
     return count
 
@@ -65,42 +73,52 @@ def transform_events(conn: duckdb.DuckDBPyConnection) -> int:
     """
     print("Transforming events...")
     
+    before = _count_table(conn, "EventDim")
+    
+    # Get max existing event_id
+    max_id = conn.execute("SELECT COALESCE(MAX(event_id), 0) FROM EventDim").fetchone()[0]
+    
     # DuckDB can query JSON directly - now uses category_id FK
-    result = conn.execute("""
-        INSERT INTO EventDim (slug, title, description, category_id, end_date)
-        SELECT DISTINCT
-            COALESCE(
-                json_extract_string(raw_json, '$.event.slug'),
-                json_extract_string(raw_json, '$.eventSlug'),
-                'unknown-' || condition_id
-            ) as slug,
-            COALESCE(
-                json_extract_string(raw_json, '$.event.title'),
-                json_extract_string(raw_json, '$.eventTitle'),
-                json_extract_string(raw_json, '$.question')
-            ) as title,
-            json_extract_string(raw_json, '$.event.description') as description,
-            dc.category_id,
-            TRY_CAST(
-                json_extract_string(raw_json, '$.event.endDate') AS TIMESTAMP
-            ) as end_date
-        FROM stg_markets_raw s
-        LEFT JOIN CategoryDim dc ON dc.category_name = COALESCE(
-            json_extract_string(s.raw_json, '$.event.category'),
-            json_extract_string(s.raw_json, '$.category'),
-            'Unknown'
-        )
-        WHERE NOT EXISTS (
-            SELECT 1 FROM EventDim e 
-            WHERE e.slug = COALESCE(
-                json_extract_string(s.raw_json, '$.event.slug'),
-                json_extract_string(s.raw_json, '$.eventSlug'),
-                'unknown-' || s.condition_id
+    conn.execute("""
+        INSERT INTO EventDim (event_id, slug, title, description, category_id, end_date)
+        SELECT 
+            ? + ROW_NUMBER() OVER (ORDER BY slug) as event_id,
+            slug, title, description, category_id, end_date
+        FROM (
+            SELECT DISTINCT
+                COALESCE(
+                    json_extract_string(raw_json, '$.event.slug'),
+                    json_extract_string(raw_json, '$.eventSlug'),
+                    'unknown-' || condition_id
+                ) as slug,
+                COALESCE(
+                    json_extract_string(raw_json, '$.event.title'),
+                    json_extract_string(raw_json, '$.eventTitle'),
+                    json_extract_string(raw_json, '$.question')
+                ) as title,
+                json_extract_string(raw_json, '$.event.description') as description,
+                dc.category_id,
+                TRY_CAST(
+                    json_extract_string(raw_json, '$.event.endDate') AS TIMESTAMP
+                ) as end_date
+            FROM stg_markets_raw s
+            LEFT JOIN CategoryDim dc ON dc.category_name = COALESCE(
+                json_extract_string(s.raw_json, '$.event.category'),
+                json_extract_string(s.raw_json, '$.category'),
+                'Unknown'
+            )
+            WHERE NOT EXISTS (
+                SELECT 1 FROM EventDim e 
+                WHERE e.slug = COALESCE(
+                    json_extract_string(s.raw_json, '$.event.slug'),
+                    json_extract_string(s.raw_json, '$.eventSlug'),
+                    'unknown-' || s.condition_id
+                )
             )
         )
-    """)
+    """, [max_id])
     
-    count = conn.execute("SELECT changes()").fetchone()[0]
+    count = _count_table(conn, "EventDim") - before
     print(f"✓ Inserted {count} events into EventDim")
     return count
 
@@ -110,13 +128,18 @@ def transform_markets(conn: duckdb.DuckDBPyConnection) -> int:
     Transform stg_markets_raw → MarketDim
     
     Links markets to events, extracts market-level attributes.
+    Uses external_id to store the conditionId from API.
     """
     print("Transforming markets...")
     
-    result = conn.execute("""
-        INSERT INTO MarketDim (condition_id, event_id, question, active, end_date_iso)
+    before = _count_table(conn, "MarketDim")
+    max_id = conn.execute("SELECT COALESCE(MAX(market_id), 0) FROM MarketDim").fetchone()[0]
+    
+    conn.execute("""
+        INSERT INTO MarketDim (market_id, external_id, event_id, question, active, end_date_iso)
         SELECT 
-            s.condition_id,
+            ? + ROW_NUMBER() OVER (ORDER BY s.condition_id) as market_id,
+            s.condition_id as external_id,
             e.event_id,
             COALESCE(
                 json_extract_string(s.raw_json, '$.question'),
@@ -138,11 +161,11 @@ def transform_markets(conn: duckdb.DuckDBPyConnection) -> int:
             'unknown-' || s.condition_id
         )
         WHERE NOT EXISTS (
-            SELECT 1 FROM MarketDim m WHERE m.condition_id = s.condition_id
+            SELECT 1 FROM MarketDim m WHERE m.external_id = s.condition_id
         )
-    """)
+    """, [max_id])
     
-    count = conn.execute("SELECT changes()").fetchone()[0]
+    count = _count_table(conn, "MarketDim") - before
     print(f"✓ Inserted {count} markets into MarketDim")
     return count
 
@@ -151,38 +174,53 @@ def transform_tokens(conn: duckdb.DuckDBPyConnection) -> int:
     """
     Transform stg_markets_raw → TokenDim
     
-    Extracts YES/NO tokens from market tokens array.
+    Extracts YES/NO tokens from market clobTokenIds and outcomes arrays.
     Uses outcome as bit (1=YES, 0=NO) for storage efficiency.
+    
+    API structure:
+      clobTokenIds: ["token1", "token2"]
+      outcomes: ["Yes", "No"]
     """
     print("Transforming tokens...")
     
-    # Unnest JSON array, convert outcome to bit (1=YES, 0=NO)
-    result = conn.execute("""
-        INSERT INTO TokenDim (token_address, market_id, outcome)
-        SELECT DISTINCT
-            t.token_address,
-            m.market_id,
-            CASE UPPER(t.outcome)
-                WHEN 'YES' THEN 1
-                WHEN 'NO' THEN 0
-                ELSE NULL
-            END as outcome
-        FROM stg_markets_raw s
-        JOIN MarketDim m ON m.condition_id = s.condition_id
-        CROSS JOIN LATERAL (
-            SELECT 
-                json_extract_string(token.value, '$.token_id') as token_address,
-                json_extract_string(token.value, '$.outcome') as outcome
-            FROM json_each(json_extract(s.raw_json, '$.tokens')) as token
-            WHERE json_extract_string(token.value, '$.token_id') IS NOT NULL
-        ) t
-        WHERE t.token_address IS NOT NULL
-          AND NOT EXISTS (
-              SELECT 1 FROM TokenDim dt WHERE dt.token_address = t.token_address
-          )
-    """)
+    before = _count_table(conn, "TokenDim")
+    max_id = conn.execute("SELECT COALESCE(MAX(token_id), 0) FROM TokenDim").fetchone()[0]
     
-    count = conn.execute("SELECT changes()").fetchone()[0]
+    # Unnest parallel arrays: clobTokenIds[i] pairs with outcomes[i]
+    # Note: clobTokenIds is stored as a JSON string within the JSON doc
+    # so we need: 1) extract string with ->>, 2) cast to JSON, 3) from_json to array
+    conn.execute("""
+        INSERT INTO TokenDim (token_id, token_address, market_id, outcome)
+        SELECT 
+            ? + ROW_NUMBER() OVER (ORDER BY token_address) as token_id,
+            token_address,
+            market_id,
+            outcome
+        FROM (
+            SELECT DISTINCT
+                t.token_address,
+                m.market_id,
+                CASE UPPER(t.outcome)
+                    WHEN 'YES' THEN 1::BIT
+                    WHEN 'NO' THEN 0::BIT
+                    ELSE NULL
+                END as outcome
+            FROM stg_markets_raw s
+            JOIN MarketDim m ON m.external_id = s.condition_id
+            CROSS JOIN LATERAL (
+                SELECT 
+                    unnest(from_json((s.raw_json::JSON->>'clobTokenIds')::JSON, '["VARCHAR"]')) as token_address,
+                    unnest(from_json((s.raw_json::JSON->>'outcomes')::JSON, '["VARCHAR"]')) as outcome
+            ) t
+            WHERE t.token_address IS NOT NULL
+              AND t.token_address != ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM TokenDim dt WHERE dt.token_address = t.token_address
+              )
+        )
+    """, [max_id])
+    
+    count = _count_table(conn, "TokenDim") - before
     print(f"✓ Inserted {count} tokens into TokenDim")
     return count
 
@@ -192,15 +230,17 @@ def transform_prices(conn: duckdb.DuckDBPyConnection) -> int:
     Transform stg_prices_raw → HourlyPriceFact
     
     Unnests JSON price arrays into hourly fact records.
-    Uses snapshot_hour TIMESTAMP directly (no dim_date FK for efficiency).
+    Uses snapshot_ts TIMESTAMP (truncated to hour).
     """
     print("Transforming prices...")
     
-    result = conn.execute("""
-        INSERT INTO HourlyPriceFact (token_id, snapshot_hour, price)
+    before = _count_table(conn, "HourlyPriceFact")
+    
+    conn.execute("""
+        INSERT INTO HourlyPriceFact (token_id, snapshot_ts, price)
         SELECT DISTINCT
             dt.token_id,
-            date_trunc('hour', to_timestamp(p.ts)) as snapshot_hour,
+            date_trunc('hour', to_timestamp(p.ts)) as snapshot_ts,
             p.price::REAL
         FROM stg_prices_raw s
         JOIN TokenDim dt ON dt.token_address = s.token_id
@@ -212,14 +252,10 @@ def transform_prices(conn: duckdb.DuckDBPyConnection) -> int:
             WHERE json_extract(point.value, '$.t') IS NOT NULL
         ) p
         WHERE p.price IS NOT NULL
-          AND NOT EXISTS (
-              SELECT 1 FROM HourlyPriceFact fps 
-              WHERE fps.token_id = dt.token_id 
-                AND fps.snapshot_hour = date_trunc('hour', to_timestamp(p.ts))
-          )
+        ON CONFLICT (token_id, snapshot_ts) DO NOTHING
     """)
     
-    count = conn.execute("SELECT changes()").fetchone()[0]
+    count = _count_table(conn, "HourlyPriceFact") - before
     print(f"✓ Inserted {count} price snapshots into HourlyPriceFact")
     return count
 
@@ -234,26 +270,34 @@ def transform_traders(conn: duckdb.DuckDBPyConnection) -> int:
     """
     print("Transforming traders...")
     
-    # Extract unique maker/taker addresses, convert hex to BLOB
-    # decode(substring(addr, 3), 'hex') removes '0x' prefix and converts to bytes
-    conn.execute("""
-        INSERT INTO TraderDim (wallet_address)
-        SELECT DISTINCT decode(substring(wallet, 3), 'hex') FROM (
-            SELECT json_extract_string(raw_json, '$.maker') as wallet
-            FROM stg_trades_raw
-            WHERE json_extract_string(raw_json, '$.maker') IS NOT NULL
-              AND length(json_extract_string(raw_json, '$.maker')) = 42
-            UNION
-            SELECT json_extract_string(raw_json, '$.taker') as wallet
-            FROM stg_trades_raw
-            WHERE json_extract_string(raw_json, '$.taker') IS NOT NULL
-              AND length(json_extract_string(raw_json, '$.taker')) = 42
-        )
-        WHERE wallet IS NOT NULL
-          AND decode(substring(wallet, 3), 'hex') NOT IN (SELECT wallet_address FROM TraderDim)
-    """)
+    before = _count_table(conn, "TraderDim")
+    max_id = conn.execute("SELECT COALESCE(MAX(trader_id), 0) FROM TraderDim").fetchone()[0]
     
-    count = conn.execute("SELECT changes()").fetchone()[0]
+    # Extract unique maker/taker addresses, convert hex to BLOB
+    # unhex(substring(addr, 3)) removes '0x' prefix and converts to bytes
+    conn.execute("""
+        INSERT INTO TraderDim (trader_id, wallet_address)
+        SELECT 
+            ? + ROW_NUMBER() OVER (ORDER BY wallet) as trader_id,
+            unhex(substring(wallet, 3))
+        FROM (
+            SELECT DISTINCT wallet FROM (
+                SELECT json_extract_string(raw_json, '$.maker') as wallet
+                FROM stg_trades_raw
+                WHERE json_extract_string(raw_json, '$.maker') IS NOT NULL
+                  AND length(json_extract_string(raw_json, '$.maker')) = 42
+                UNION
+                SELECT json_extract_string(raw_json, '$.taker') as wallet
+                FROM stg_trades_raw
+                WHERE json_extract_string(raw_json, '$.taker') IS NOT NULL
+                  AND length(json_extract_string(raw_json, '$.taker')) = 42
+            )
+            WHERE wallet IS NOT NULL
+              AND unhex(substring(wallet, 3)) NOT IN (SELECT wallet_address FROM TraderDim)
+        )
+    """, [max_id])
+    
+    count = _count_table(conn, "TraderDim") - before
     print(f"✓ Inserted {count} traders into TraderDim")
     return count
 
@@ -268,7 +312,9 @@ def transform_trades(conn: duckdb.DuckDBPyConnection) -> int:
     """
     print("Transforming trades...")
     
-    result = conn.execute("""
+    before = _count_table(conn, "TradeFact")
+    
+    conn.execute("""
         INSERT INTO TradeFact (token_id, trade_ts, price, size, side, maker_id, taker_id)
         SELECT 
             dt.token_id,
@@ -276,9 +322,9 @@ def transform_trades(conn: duckdb.DuckDBPyConnection) -> int:
             json_extract(s.raw_json, '$.price')::REAL as price,
             json_extract(s.raw_json, '$.size')::REAL as size,
             CASE UPPER(COALESCE(json_extract_string(s.raw_json, '$.side'), ''))
-                WHEN 'BUY' THEN 1
-                WHEN 'SELL' THEN 0
-                ELSE 0
+                WHEN 'BUY' THEN 1::BIT
+                WHEN 'SELL' THEN 0::BIT
+                ELSE 0::BIT
             END as side,
             maker.trader_id as maker_id,
             taker.trader_id as taker_id
@@ -286,16 +332,16 @@ def transform_trades(conn: duckdb.DuckDBPyConnection) -> int:
         JOIN MarketDim m ON m.external_id = s.condition_id
         JOIN TokenDim dt ON dt.market_id = m.market_id
             AND dt.outcome = CASE 
-                WHEN UPPER(json_extract_string(s.raw_json, '$.outcome')) = 'YES' THEN 1
-                WHEN UPPER(json_extract_string(s.raw_json, '$.outcome')) = 'NO' THEN 0
+                WHEN UPPER(json_extract_string(s.raw_json, '$.outcome')) = 'YES' THEN 1::BIT
+                WHEN UPPER(json_extract_string(s.raw_json, '$.outcome')) = 'NO' THEN 0::BIT
                 ELSE dt.outcome
             END
-        LEFT JOIN TraderDim maker ON maker.wallet_address = decode(substring(json_extract_string(s.raw_json, '$.maker'), 3), 'hex')
-        LEFT JOIN TraderDim taker ON taker.wallet_address = decode(substring(json_extract_string(s.raw_json, '$.taker'), 3), 'hex')
+        LEFT JOIN TraderDim maker ON maker.wallet_address = unhex(substring(json_extract_string(s.raw_json, '$.maker'), 3))
+        LEFT JOIN TraderDim taker ON taker.wallet_address = unhex(substring(json_extract_string(s.raw_json, '$.taker'), 3))
         WHERE json_extract(s.raw_json, '$.price') IS NOT NULL
     """)
     
-    count = conn.execute("SELECT changes()").fetchone()[0]
+    count = _count_table(conn, "TradeFact") - before
     print(f"✓ Inserted {count} trades into TradeFact")
     return count
 
@@ -322,6 +368,7 @@ def cleanup_staging(conn: duckdb.DuckDBPyConnection,
     deleted = {}
     
     # Clean prices staging (where we have corresponding fact records)
+    before_prices = _count_table(conn, "stg_prices_raw")
     conn.execute("""
         DELETE FROM stg_prices_raw
         WHERE fetched_at < CURRENT_TIMESTAMP - INTERVAL ? DAY
@@ -330,18 +377,19 @@ def cleanup_staging(conn: duckdb.DuckDBPyConnection,
               WHERE dt.token_address = stg_prices_raw.token_id
           )
     """, [older_than_days])
-    deleted['stg_prices_raw'] = conn.execute("SELECT changes()").fetchone()[0]
+    deleted['stg_prices_raw'] = before_prices - _count_table(conn, "stg_prices_raw")
     
     # Clean trades staging
+    before_trades = _count_table(conn, "stg_trades_raw")
     conn.execute("""
         DELETE FROM stg_trades_raw
         WHERE fetched_at < CURRENT_TIMESTAMP - INTERVAL ? DAY
           AND EXISTS (
               SELECT 1 FROM MarketDim m 
-              WHERE m.condition_id = stg_trades_raw.condition_id
+              WHERE m.external_id = stg_trades_raw.condition_id
           )
     """, [older_than_days])
-    deleted['stg_trades_raw'] = conn.execute("SELECT changes()").fetchone()[0]
+    deleted['stg_trades_raw'] = before_trades - _count_table(conn, "stg_trades_raw")
     
     # Markets staging we keep (reference data)
     deleted['stg_markets_raw'] = 0

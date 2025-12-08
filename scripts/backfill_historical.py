@@ -15,20 +15,24 @@ from create_database import DEFAULT_DB_PATH
 
 
 def backfill_markets(conn: duckdb.DuckDBPyConnection, 
-                     client: PolymarketClient) -> int:
+                     client: PolymarketClient,
+                     limit: Optional[int] = None) -> int:
     """
-    Backfill all markets into stg_markets_raw.
+    Backfill markets into stg_markets_raw.
     Skips markets already in staging or gold layer.
     
     Args:
         conn: DuckDB connection
         client: Polymarket API client
+        limit: Maximum number of NEW markets to load (None = all)
         
     Returns:
         Number of NEW markets loaded
     """
     print("\n" + "="*60)
     print("BACKFILLING MARKETS")
+    if limit:
+        print(f"  (Limited to {limit} new markets)")
     print("="*60)
     
     # Get existing market IDs from staging and gold layers
@@ -40,7 +44,7 @@ def backfill_markets(conn: duckdb.DuckDBPyConnection,
     existing_gold = set()
     try:
         existing_gold = set(row[0] for row in conn.execute(
-            "SELECT condition_id FROM MarketDim"
+            "SELECT external_id FROM MarketDim"
         ).fetchall())
     except:
         pass  # Gold table may not exist yet
@@ -66,6 +70,13 @@ def backfill_markets(conn: duckdb.DuckDBPyConnection,
         batch.append((condition_id, json.dumps(market), "gamma_api"))
         existing_ids.add(condition_id)  # Track for deduplication within batch
         count += 1
+        
+        # Check limit
+        if limit and count >= limit:
+            if batch:
+                _insert_markets_batch(conn, batch)
+            print(f"  Reached limit of {limit} new markets")
+            break
         
         if len(batch) >= batch_size:
             _insert_markets_batch(conn, batch)
@@ -122,7 +133,7 @@ def backfill_prices(conn: duckdb.DuckDBPyConnection,
     try:
         # Get condition_ids from markets that have price facts
         markets_with_prices_gold = set(row[0] for row in conn.execute("""
-            SELECT DISTINCT m.condition_id 
+            SELECT DISTINCT m.external_id 
             FROM HourlyPriceFact f
             JOIN TokenDim t ON f.token_id = t.token_id
             JOIN MarketDim m ON t.market_id = m.market_id
@@ -151,21 +162,20 @@ def backfill_prices(conn: duckdb.DuckDBPyConnection,
     for i, (condition_id, raw_json) in enumerate(markets):
         market = json.loads(raw_json)
         
-        # Extract tokens (YES/NO outcomes)
-        tokens = market.get("tokens") or market.get("clobTokenIds") or []
+        # Extract tokens - API returns parallel arrays: clobTokenIds and outcomes
+        clob_token_ids = market.get("clobTokenIds") or []
+        outcomes = market.get("outcomes") or []
         
-        for token in tokens:
-            if isinstance(token, dict):
-                token_id = token.get("token_id") or token.get("tokenId")
-                outcome = token.get("outcome", "Unknown")
-            else:
-                token_id = str(token)
-                outcome = "Unknown"
-            
+        # Pair them up (first token = first outcome, etc.)
+        for idx, token_id in enumerate(clob_token_ids):
             if not token_id:
                 continue
             
+            outcome = outcomes[idx] if idx < len(outcomes) else "Unknown"
+            
             # Fetch price history
+            # Use interval="max" to get all historical data
+            # Note: don't use start_ts/end_ts with interval - they're mutually exclusive
             history = client.get_prices_history(
                 token_id=token_id,
                 interval="max",
@@ -341,7 +351,7 @@ def run_backfill(db_path: str = None,
     with PolymarketClient() as client:
         # Backfill markets
         if not skip_markets:
-            backfill_markets(conn, client)
+            backfill_markets(conn, client, limit=limit_markets)
         
         # Backfill prices
         if not skip_prices:

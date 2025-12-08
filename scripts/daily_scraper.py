@@ -53,9 +53,9 @@ def scrape_daily_prices(conn: duckdb.DuckDBPyConnection,
     # Also check gold layer
     try:
         gold_tokens = set(row[0] for row in conn.execute("""
-            SELECT DISTINCT t.clob_token_id FROM HourlyPriceFact f
+            SELECT DISTINCT t.token_address FROM HourlyPriceFact f
             JOIN TokenDim t ON f.token_id = t.token_id
-            WHERE f.snapshot_hour >= ? AND f.snapshot_hour <= ?
+            WHERE f.snapshot_ts >= ? AND f.snapshot_ts <= ?
         """, [start_dt, end_dt]).fetchall())
         existing_tokens |= gold_tokens
     except:
@@ -88,15 +88,10 @@ def scrape_daily_prices(conn: duckdb.DuckDBPyConnection,
     for i, (condition_id, raw_json) in enumerate(markets):
         market = json.loads(raw_json)
         
-        # Extract tokens
-        tokens = market.get("tokens") or market.get("clobTokenIds") or []
+        # Extract tokens - API returns clobTokenIds array
+        clob_token_ids = market.get("clobTokenIds") or []
         
-        for token in tokens:
-            if isinstance(token, dict):
-                token_id = token.get("token_id") or token.get("tokenId")
-            else:
-                token_id = str(token)
-            
+        for token_id in clob_token_ids:
             if not token_id:
                 continue
             
@@ -106,11 +101,12 @@ def scrape_daily_prices(conn: duckdb.DuckDBPyConnection,
                 continue
             
             # Fetch hourly prices for this day
+            # Note: interval and start_ts/end_ts are mutually exclusive
+            # Use start_ts/end_ts for specific date ranges
             history = client.get_prices_history(
                 token_id=token_id,
                 start_ts=start_ts,
                 end_ts=end_ts,
-                interval="1d",
                 fidelity=60  # Hourly
             )
             

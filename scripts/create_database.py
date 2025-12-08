@@ -164,25 +164,24 @@ def create_database(db_path: str = None) -> duckdb.DuckDBPyConnection:
     """)
     
     # HourlyPriceFact - Hourly price facts
-    # No dim_date join - store timestamp directly (more efficient for DuckDB)
+    # Store full timestamp (date_trunc to hour) - simpler and efficient
     # DuckDB can extract date parts on-the-fly very efficiently
     conn.execute("""
         CREATE TABLE IF NOT EXISTS HourlyPriceFact (
-            snapshot_id     INTEGER PRIMARY KEY,
             token_id        INTEGER NOT NULL REFERENCES TokenDim(token_id),
-            snapshot_date   DATE NOT NULL,
-            snapshot_hour   tinyint NOT NULL,
+            snapshot_ts     TIMESTAMP NOT NULL,
             price           REAL NOT NULL,
             volume          REAL,
-            UNIQUE(token_id, snapshot_hour)
+            PRIMARY KEY (token_id, snapshot_ts)
         )
     """)
     # Use REAL (4 bytes) instead of DOUBLE (8 bytes) - price precision is fine
     # volume = hourly volume (can sum to get 24h/daily/weekly as needed)
+    # ~20 bytes per row (removed snapshot_id, combined date+hour into timestamp)
     
     conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_price_hour 
-        ON HourlyPriceFact(snapshot_hour)
+        CREATE INDEX IF NOT EXISTS idx_price_ts 
+        ON HourlyPriceFact(snapshot_ts)
     """)
     
     # TradeFact - Trade facts (no synthetic trade_id for storage efficiency)

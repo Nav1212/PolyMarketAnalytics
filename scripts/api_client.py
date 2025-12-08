@@ -69,7 +69,7 @@ class PolymarketClient:
         self.data_limiter = RateLimiter(data_rps)
         
         self.client = httpx.Client(
-            timeout=timeout,
+            timeout=httpx.Timeout(timeout, connect=10.0),
             headers={
                 "User-Agent": "PolymarketDataPipeline/1.0",
                 "Accept": "application/json"
@@ -78,6 +78,7 @@ class PolymarketClient:
         
         self._request_count = 0
         self._error_count = 0
+        self._max_retries = 3
     
     def close(self):
         """Close HTTP client"""
@@ -196,32 +197,43 @@ class PolymarketClient:
                            token_id: str,
                            start_ts: Optional[int] = None,
                            end_ts: Optional[int] = None,
-                           interval: str = "max",
+                           interval: Optional[str] = None,
                            fidelity: int = 60) -> List[Dict[str, Any]]:
         """
         Fetch price history for a token from CLOB API.
         
         Args:
-            token_id: Token ID (YES or NO outcome)
-            start_ts: Start timestamp (Unix seconds)
-            end_ts: End timestamp (Unix seconds)
-            interval: Time interval ('1m', '1h', '1d', '1w', 'max')
+            token_id: Token ID (CLOB token, not condition_id)
+            start_ts: Start timestamp (Unix seconds) - MUTUALLY EXCLUSIVE with interval
+            end_ts: End timestamp (Unix seconds) - MUTUALLY EXCLUSIVE with interval
+            interval: Relative time interval ('1m', '1h', '1d', '1w', 'max') - MUTUALLY EXCLUSIVE with start_ts/end_ts
             fidelity: Resolution in minutes (60 = hourly)
             
         Returns:
             List of {t: timestamp, p: price} dicts
+            
+        Note:
+            Use EITHER interval OR start_ts/end_ts, not both.
+            - interval="max" gets all historical data
+            - start_ts/end_ts gets a specific date range
         """
         self.clob_limiter.wait()
         
         params = {
             "market": token_id,
-            "interval": interval,
             "fidelity": fidelity
         }
-        if start_ts:
-            params["startTs"] = start_ts
-        if end_ts:
-            params["endTs"] = end_ts
+        
+        # interval and start_ts/end_ts are mutually exclusive
+        if start_ts is not None or end_ts is not None:
+            # Use specific date range
+            if start_ts:
+                params["startTs"] = start_ts
+            if end_ts:
+                params["endTs"] = end_ts
+        else:
+            # Use relative interval (default to max if nothing specified)
+            params["interval"] = interval or "max"
         
         try:
             response = self.client.get(f"{self.CLOB_BASE}/prices-history", params=params)
