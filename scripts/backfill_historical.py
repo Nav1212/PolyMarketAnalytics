@@ -232,7 +232,7 @@ def backfill_prices(conn: duckdb.DuckDBPyConnection,
     return total_prices
 
 
-def backfill_trades_november_2024(conn: duckdb.DuckDBPyConnection,
+def backfill_trades(conn: duckdb.DuckDBPyConnection,
                                    client: PolymarketClient) -> int:
     """
     Backfill trades for November 2024 only.
@@ -249,9 +249,9 @@ def backfill_trades_november_2024(conn: duckdb.DuckDBPyConnection,
     print("BACKFILLING NOVEMBER 2024 TRADES")
     print("="*60)
     
-    # November 2024 range
     start_dt = datetime(2024, 11, 1, 0, 0, 0, tzinfo=timezone.utc)
-    end_dt = datetime(2024, 11, 30, 23, 59, 59, tzinfo=timezone.utc)
+    end_dt =  datetime(2024, 11, 30, 0, 0, 0, tzinfo=timezone.utc)
+    #end_dt =  datetime.now(timezone.utc)
     start_ts = timestamp_to_unix(start_dt)
     end_ts = timestamp_to_unix(end_dt)
     
@@ -296,8 +296,9 @@ def backfill_trades_november_2024(conn: duckdb.DuckDBPyConnection,
     batch_size = 100
     
     for trade in client.get_trades_for_period(start_ts=start_ts, end_ts=end_ts):
-        condition_id = trade.get("market") or trade.get("condition_id")
-        trade_ts = trade.get("timestamp") or trade.get("matchTime")
+        condition_id = trade.get("conditionId")
+        print("got trade:", condition_id)
+        trade_ts = trade.get("timestamp")
         
         if not condition_id or not trade_ts:
             continue
@@ -382,7 +383,7 @@ def run_backfill(db_path: str = None,
         
         # Backfill November 2024 trades
         if not skip_trades:
-            backfill_trades_november_2024(conn, client)
+            backfill_trades(conn, client)
         
         # Print stats
         api_stats = client.get_stats()

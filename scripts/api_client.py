@@ -48,7 +48,7 @@ class PolymarketClient:
     
     GAMMA_BASE = "https://gamma-api.polymarket.com"
     CLOB_BASE = "https://clob.polymarket.com"
-    DATA_BASE = "https://data-api.polymarket.com"
+    DATA_API_BASE = "https://data-api.polymarket.com"
     
     def __init__(self, 
                  gamma_rps: float = 10.0,
@@ -275,7 +275,7 @@ class PolymarketClient:
                    start_ts: Optional[int] = None,
                    end_ts: Optional[int] = None,
                    limit: int = 100,
-                   cursor: Optional[str] = None) -> Dict[str, Any]:
+                   cursor: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Fetch trades from Data API.
         
@@ -289,6 +289,7 @@ class PolymarketClient:
         Returns:
             Dict with 'data' (trades list) and 'next_cursor'
         """
+        print("Fetching trades...")
         self.data_limiter.wait()
         
         params = {"limit": limit}
@@ -302,7 +303,7 @@ class PolymarketClient:
             params["cursor"] = cursor
         
         try:
-            response = self.client.get(f"{self.DATA_BASE}/trades", params=params)
+            response = self.client.get(f"{self.DATA_API_BASE}/trades", params=params)
             response.raise_for_status()
             self._request_count += 1
             return response.json()
@@ -326,27 +327,19 @@ class PolymarketClient:
         Yields:
             Individual trade dicts
         """
-        cursor = None
-        while True:
+        window = 360+start_ts
+        while end_ts > start_ts:
+            
             result = self.get_trades(
                 market=market,
                 start_ts=start_ts,
-                end_ts=end_ts,
-                limit=100,
-                cursor=cursor
+                end_ts=window,
             )
             
-            trades = result.get("data", [])
-            if not trades:
-                break
-            
-            for trade in trades:
-                yield trade
-            
-            cursor = result.get("next_cursor")
-            if not cursor:
-                break
-    
+            yield from result 
+            diff = window - start_ts
+            start_ts = window
+            window += min(diff, end_ts - window)
     # ==================== UTILITY ====================
     
     def get_stats(self) -> Dict[str, int]:
