@@ -91,7 +91,7 @@ def run_monthly_backup(db_path: str = None,
     # TradeFact
     output = archive_path / "TradeFact.parquet"
     count = export_to_parquet(conn, "TradeFact", str(output))
-    print(f"✓ TradeFact: {count:,} rows → {output.name}"))
+    print(f"✓ TradeFact: {count:,} rows → {output.name}")
     
     # Calculate total size
     total_size = sum(f.stat().st_size for f in archive_path.glob("*.parquet"))
