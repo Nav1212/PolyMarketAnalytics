@@ -193,59 +193,55 @@ class PolymarketClient:
     
     # ==================== CLOB API (Prices) ====================
     
-    def get_prices_history(self,
-                           token_id: str,
-                           start_ts: Optional[int] = None,
-                           end_ts: Optional[int] = None,
-                           interval: Optional[str] = None,
-                           fidelity: int = 60) -> List[Dict[str, Any]]:
-        """
-        Fetch price history for a token from CLOB API.
-        
-        Args:
-            token_id: Token ID (CLOB token, not condition_id)
-            start_ts: Start timestamp (Unix seconds) - MUTUALLY EXCLUSIVE with interval
-            end_ts: End timestamp (Unix seconds) - MUTUALLY EXCLUSIVE with interval
-            interval: Relative time interval ('1m', '1h', '1d', '1w', 'max') - MUTUALLY EXCLUSIVE with start_ts/end_ts
-            fidelity: Resolution in minutes (60 = hourly)
-            
-        Returns:
-            List of {t: timestamp, p: price} dicts
-            
-        Note:
-            Use EITHER interval OR start_ts/end_ts, not both.
-            - interval="max" gets all historical data
-            - start_ts/end_ts gets a specific date range
-        """
+    def get_prices_history(
+        self,
+        token_id: str,
+        start_ts: Optional[int] = None,
+        end_ts: Optional[int] = None,
+        interval: Optional[str] = None,
+        fidelity: int = 60
+    ) -> List[Dict[str, Any]]:
+
         self.clob_limiter.wait()
-        
+
+        # Validate mutual exclusivity
+        if interval is not None and (start_ts is not None or end_ts is not None):
+            raise ValueError("Use either interval OR start_ts/end_ts, not both.")
+
         params = {
             "market": token_id,
-            "fidelity": fidelity
+            "fidelity": fidelity,
         }
-        
-        # interval and start_ts/end_ts are mutually exclusive
+
+        # If date range
         if start_ts is not None or end_ts is not None:
-            # Use specific date range
-            if start_ts:
-                params["startTs"] = start_ts
-            if end_ts:
-                params["endTs"] = end_ts
+            if start_ts is None or end_ts is None:
+                raise ValueError("Both start_ts and end_ts must be provided.")
+            params["startTs"] = start_ts
+            params["endTs"] = end_ts
         else:
-            # Use relative interval (default to max if nothing specified)
             params["interval"] = interval or "max"
-        
+
         try:
             response = self.client.get(f"{self.CLOB_BASE}/prices-history", params=params)
             response.raise_for_status()
             self._request_count += 1
+
             data = response.json()
-            return data.get("history", []) if isinstance(data, dict) else data
+
+            # Handle different formats cleanly
+            if isinstance(data, dict) and "history" in data:
+                return data["history"]
+            if isinstance(data, list):
+                return data
+
+            return []   
+
         except Exception as e:
             self._error_count += 1
             print(f"Error fetching price history for {token_id}: {e}")
             return []
-    
+
     def get_current_prices(self, token_ids: List[str]) -> Dict[str, float]:
         """
         Fetch current prices for multiple tokens.

@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-
+import re 
 from api_client import PolymarketClient, timestamp_to_unix
 from create_database import DEFAULT_DB_PATH
 
@@ -40,22 +40,16 @@ def backfill_markets(conn: duckdb.DuckDBPyConnection,
         "SELECT condition_id FROM stg_markets_raw"
     ).fetchall())
     
-    # Check if gold layer exists and get IDs
-    existing_gold = set()
-    try:
-        existing_gold = set(row[0] for row in conn.execute(
+    existing_gold = set(row[0] for row in conn.execute(
             "SELECT external_id FROM MarketDim"
         ).fetchall())
-    except:
-        pass  # Gold table may not exist yet
     
     existing_ids = existing_staging | existing_gold
+    if len(existing_ids)>=limit:
+        return 0
     print(f"  Found {len(existing_ids):,} markets already in database")
     
-    count = 0
-    skipped = 0
     batch = []
-    batch_size = 50
     
     for market in client.get_all_markets(batch_size=100):
         condition_id = market.get("condition_id") or market.get("conditionId")
@@ -64,31 +58,24 @@ def backfill_markets(conn: duckdb.DuckDBPyConnection,
         
         # Skip if already exists
         if condition_id in existing_ids:
-            skipped += 1
             continue
         
         batch.append((condition_id, json.dumps(market), "gamma_api"))
         existing_ids.add(condition_id)  # Track for deduplication within batch
-        count += 1
         
         # Check limit
-        if limit and count >= limit:
-            if batch:
-                _insert_markets_batch(conn, batch)
-            print(f"  Reached limit of {limit} new markets")
-            break
+
         
-        if len(batch) >= batch_size:
+        if len(batch) >= 100:
             _insert_markets_batch(conn, batch)
-            print(f"  Loaded {count} new markets (skipped {skipped} existing)...")
+            print(f"  Loaded new markets (skipped existing)...")
             batch = []
     
     # Insert remaining
     if batch:
         _insert_markets_batch(conn, batch)
     
-    print(f"✓ Loaded {count} new markets (skipped {skipped} existing)")
-    return count
+    return 
 
 
 def _insert_markets_batch(conn: duckdb.DuckDBPyConnection, batch: list):
@@ -100,6 +87,41 @@ def _insert_markets_batch(conn: duckdb.DuckDBPyConnection, batch: list):
             ON CONFLICT (condition_id) DO UPDATE SET
                 raw_json = excluded.raw_json
         """, item)
+
+
+def clean_clob_token_ids(raw_ids):
+    cleaned = []
+
+    # If raw_ids is a JSON string like "[\"abc\", \"def\"]"
+    if isinstance(raw_ids, str):
+        try:
+            parsed = json.loads(raw_ids)
+            raw_ids = parsed
+        except Exception:
+            # If parsing fails, treat as list of characters (bad data)
+            raw_ids = []
+
+    # Ensure we have a list
+    if not isinstance(raw_ids, list):
+        return []
+
+    for item in raw_ids:
+        if not item:
+            continue
+
+        # Clean the item
+        token = str(item).strip("[](){}\"' \n\r\t")
+
+        # Allow alphanumeric, dash, underscore, comma
+        token = re.sub(r"[^A-Za-z0-9\-,_]", "", token)
+
+        # Skip short or empty tokens
+        if len(token) < 3:
+            continue
+
+        cleaned.append(token)
+
+    return cleaned
 
 
 def backfill_prices(conn: duckdb.DuckDBPyConnection,
@@ -149,6 +171,7 @@ def backfill_prices(conn: duckdb.DuckDBPyConnection,
         SELECT condition_id, raw_json 
         FROM stg_markets_raw
         WHERE condition_id NOT IN (SELECT DISTINCT condition_id FROM stg_prices_raw)
+        order by condition_id desc
     """).fetchall()
     
     if limit_markets:
@@ -157,21 +180,21 @@ def backfill_prices(conn: duckdb.DuckDBPyConnection,
     print(f"  Processing {len(markets)} markets needing price data...")
     
     total_prices = 0
-    skipped = 0
     
     for i, (condition_id, raw_json) in enumerate(markets):
         market = json.loads(raw_json)
         
         # Extract tokens - API returns parallel arrays: clobTokenIds and outcomes
         clob_token_ids = market.get("clobTokenIds") or []
-        outcomes = market.get("outcomes") or []
-        
+        print("got clob_token ids:", clob_token_ids)
+        clob_token_ids = clean_clob_token_ids(clob_token_ids)
+        print("cleaned clob_token ids:", clob_token_ids)
+
         # Pair them up (first token = first outcome, etc.)
-        for idx, token_id in enumerate(clob_token_ids):
+        for  token_id in enumerate(clob_token_ids):
             if not token_id:
                 continue
             
-            outcome = outcomes[idx] if idx < len(outcomes) else "Unknown"
             
             # Fetch price history
             # Use interval="max" to get all historical data
