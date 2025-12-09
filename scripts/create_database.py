@@ -61,8 +61,7 @@ def create_database(db_path: str = None) -> duckdb.DuckDBPyConnection:
         CREATE TABLE IF NOT EXISTS stg_markets_raw (
             condition_id    TEXT PRIMARY KEY,
             raw_json        JSON NOT NULL,
-            fetched_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            source          TEXT DEFAULT 'gamma_api'
+            fetched_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     
@@ -72,8 +71,6 @@ def create_database(db_path: str = None) -> duckdb.DuckDBPyConnection:
             condition_id    TEXT NOT NULL,
             token_id        TEXT NOT NULL,
             raw_json        JSON NOT NULL,
-            start_ts        TIMESTAMP NOT NULL,
-            end_ts          TIMESTAMP NOT NULL,
             fetched_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (condition_id, token_id, start_ts, end_ts)
         )
@@ -85,15 +82,9 @@ def create_database(db_path: str = None) -> duckdb.DuckDBPyConnection:
         CREATE TABLE IF NOT EXISTS stg_trades_raw (
             condition_id    TEXT NOT NULL,
             raw_json        JSON NOT NULL,
-            trade_timestamp TIMESTAMP NOT NULL,
             fetched_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_stg_trades_ts 
-        ON stg_trades_raw(trade_timestamp)
-    """)
-    
     print("✓ Staging layer created")
     
     # ==================== GOLD LAYER (Snowflake Schema) ====================
