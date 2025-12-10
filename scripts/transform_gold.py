@@ -20,8 +20,14 @@ Storage Optimizations:
 
 import duckdb
 import json
+import sys
 from datetime import datetime
 from typing import Optional
+
+# Fix Windows console encoding for Unicode characters
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 from create_database import DEFAULT_DB_PATH
 
@@ -318,7 +324,7 @@ def transform_trades(conn: duckdb.DuckDBPyConnection) -> int:
         INSERT INTO TradeFact (token_id, trade_ts, price, size, side, maker_id, taker_id)
         SELECT 
             dt.token_id,
-            s.trade_timestamp as trade_ts,
+            to_timestamp(CAST(json_extract(s.raw_json, '$.timestamp') AS BIGINT)) as trade_ts,
             json_extract(s.raw_json, '$.price')::REAL as price,
             json_extract(s.raw_json, '$.size')::REAL as size,
             CASE UPPER(COALESCE(json_extract_string(s.raw_json, '$.side'), ''))
@@ -414,7 +420,6 @@ def run_full_transform(db_path: str = None,
     """
     if db_path is None:
         db_path = DEFAULT_DB_PATH
-    
     print("="*60)
     print("GOLD LAYER TRANSFORMATION (Snowflake Schema)")
     print(f"Database: {db_path}")
@@ -422,7 +427,8 @@ def run_full_transform(db_path: str = None,
     print("="*60)
     
     conn = duckdb.connect(db_path)
-    
+    conn.execute("truncate table stg_trades_raw")
+
     # Transform in dependency order (snowflake: lookup tables first)
     transform_categories(conn)  # Must be before events
     transform_events(conn)

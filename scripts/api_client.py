@@ -6,29 +6,70 @@ Handles requests to Gamma API and CLOB API with rate limiting
 import httpx
 import time
 import json
+import threading
+from collections import deque
 from typing import Optional, List, Dict, Any, Generator
 from datetime import datetime, timezone
-from dataclasses import dataclass
 
 
-@dataclass
-class RateLimiter:
-    """Simple rate limiter with configurable requests per second"""
-    requests_per_second: float
-    last_request_time: float = 0.0
+class TokenBucketLimiter:
+    """
+    Thread-safe token bucket rate limiter.
+    Tracks requests in a time window to enforce rate limits across multiple threads.
+    """
+    def __init__(self, requests_per_second: float, window_seconds: float = 1.0):
+        """
+        Args:
+            requests_per_second: Maximum requests allowed per second
+            window_seconds: Time window to track requests (default 1 second)
+        """
+        self.rate = requests_per_second
+        self.window = window_seconds
+        self.lock = threading.Lock()
+        self.requests = deque()  # Stores timestamps of recent requests
     
-    def wait(self):
-        """Wait if needed to respect rate limit"""
-        if self.requests_per_second <= 0:
-            return
-        
-        min_interval = 1.0 / self.requests_per_second
-        elapsed = time.time() - self.last_request_time
-        
-        if elapsed < min_interval:
-            time.sleep(min_interval - elapsed)
-        
-        self.last_request_time = time.time()
+    def acquire(self) -> None:
+        """
+        Acquire permission to make a request.
+        Blocks if rate limit would be exceeded.
+        """
+        with self.lock:
+            now = time.time()
+            
+            # Remove old requests outside the time window
+            cutoff = now - self.window
+            while self.requests and self.requests[0] < cutoff:
+                self.requests.popleft()
+            
+            # If at capacity, wait until oldest request expires
+            if len(self.requests) >= self.rate * self.window:
+                sleep_time = self.requests[0] + self.window - now
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                    # Re-check after sleeping
+                    now = time.time()
+                    cutoff = now - self.window
+                    while self.requests and self.requests[0] < cutoff:
+                        self.requests.popleft()
+            
+            # Record this request
+            self.requests.append(now)
+    
+    def get_stats(self) -> dict:
+        """Get current limiter statistics"""
+        with self.lock:
+            now = time.time()
+            cutoff = now - self.window
+            # Clean old requests
+            while self.requests and self.requests[0] < cutoff:
+                self.requests.popleft()
+            
+            return {
+                'current_requests': len(self.requests),
+                'max_requests': int(self.rate * self.window),
+                'window_seconds': self.window,
+                'rate_limit': self.rate
+            }
 
 
 class PolymarketClient:
@@ -53,20 +94,22 @@ class PolymarketClient:
     def __init__(self, 
                  gamma_rps: float = 10.0,
                  clob_rps: float = 8.0,
-                 data_rps: float = 6.0,
-                 timeout: float = 30.0):
+                 data_rps: float = 7.5,
+                 timeout: float = 30.0,
+                 shared_data_limiter: Optional[TokenBucketLimiter] = None):
         """
         Initialize client with rate limiters.
         
         Args:
             gamma_rps: Requests per second for Gamma API
             clob_rps: Requests per second for CLOB API
-            data_rps: Requests per second for Data API
+            data_rps: Requests per second for Data API (ignored if shared_data_limiter provided)
             timeout: Request timeout in seconds
+            shared_data_limiter: Optional shared rate limiter for Data API (for multithreading)
         """
-        self.gamma_limiter = RateLimiter(gamma_rps)
-        self.clob_limiter = RateLimiter(clob_rps)
-        self.data_limiter = RateLimiter(data_rps)
+        self.gamma_limiter = TokenBucketLimiter(gamma_rps)
+        self.clob_limiter = TokenBucketLimiter(clob_rps)
+        self.data_limiter = shared_data_limiter or TokenBucketLimiter(data_rps)
         
         self.client = httpx.Client(
             timeout=httpx.Timeout(timeout, connect=10.0),
@@ -109,7 +152,7 @@ class PolymarketClient:
         Returns:
             List of market dicts
         """
-        self.gamma_limiter.wait()
+        self.gamma_limiter.acquire()
         
         params = {"limit": limit, "offset": offset}
         if active is not None:
@@ -162,7 +205,7 @@ class PolymarketClient:
     
     def get_market(self, condition_id: str) -> Optional[Dict[str, Any]]:
         """Fetch single market by condition_id"""
-        self.gamma_limiter.wait()
+        self.gamma_limiter.acquire()
         
         try:
             response = self.client.get(f"{self.GAMMA_BASE}/markets/{condition_id}")
@@ -176,7 +219,7 @@ class PolymarketClient:
     
     def get_events(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """Fetch events from Gamma API"""
-        self.gamma_limiter.wait()
+        self.gamma_limiter.acquire()
         
         try:
             response = self.client.get(
@@ -202,7 +245,7 @@ class PolymarketClient:
         fidelity: int = 60
     ) -> List[Dict[str, Any]]:
 
-        self.clob_limiter.wait()
+        self.clob_limiter.acquire()
 
         # Validate mutual exclusivity
         if interval is not None and (start_ts is not None or end_ts is not None):
@@ -252,7 +295,7 @@ class PolymarketClient:
         Returns:
             Dict mapping token_id -> current price
         """
-        self.clob_limiter.wait()
+        self.clob_limiter.acquire()
         
         try:
             # CLOB API accepts comma-separated token IDs
@@ -274,23 +317,21 @@ class PolymarketClient:
                    market: Optional[str] = None,
                    start_ts: Optional[int] = None,
                    end_ts: Optional[int] = None,
-                   limit: int = 100,
-                   cursor: Optional[str] = None) -> List[Dict[str, Any]]:
+                   limit: int = 500) -> List[Dict[str, Any]]:
         """
         Fetch trades from Data API.
+        Returns a flat list of trade dicts (API does not support cursor pagination).
         
         Args:
             market: Filter by market condition_id
             start_ts: Start timestamp (Unix seconds)
             end_ts: End timestamp (Unix seconds)
-            limit: Number of trades per page
-            cursor: Pagination cursor
+            limit: Number of trades per page (max 500)
             
         Returns:
-            Dict with 'data' (trades list) and 'next_cursor'
+            List of trade dicts
         """
-        print("Fetching trades...")
-        self.data_limiter.wait()
+        self.data_limiter.acquire()
         
         params = {"limit": limit}
         if market:
@@ -299,8 +340,6 @@ class PolymarketClient:
             params["startTs"] = start_ts
         if end_ts:
             params["endTs"] = end_ts
-        if cursor:
-            params["cursor"] = cursor
         
         try:
             response = self.client.get(f"{self.DATA_API_BASE}/trades", params=params)
@@ -310,36 +349,49 @@ class PolymarketClient:
         except Exception as e:
             self._error_count += 1
             print(f"Error fetching trades: {e}")
-            return {"data": [], "next_cursor": None}
+            return []
     
     def get_trades_for_period(self,
                               start_ts: int,
                               end_ts: int,
-                              market: Optional[str] = None) -> Generator[Dict[str, Any], None, None]:
+                              market: Optional[str] = None,
+                              page_size: int = 500) -> Generator[Dict[str, Any], None, None]:
         """
-        Iterate through all trades for a time period.
+        Iterate through all trades for a time period using timestamp windowing.
         
         Args:
             start_ts: Start timestamp (Unix seconds)
             end_ts: End timestamp (Unix seconds)
-            market: Optional market filter
+            market: Optional market filter (condition_id)
+            page_size: Trades per API call (default 500, API max)
             
         Yields:
             Individual trade dicts
         """
-        window = 360+start_ts
-        while end_ts > start_ts:
-            
-            result = self.get_trades(
+        current_start = start_ts
+        
+        while current_start < end_ts:
+            trades = self.get_trades(
                 market=market,
-                start_ts=start_ts,
-                end_ts=window,
+                start_ts=current_start,
+                end_ts=end_ts,
+                limit=page_size
             )
             
-            yield from result 
-            diff = window - start_ts
-            start_ts = window
-            window += min(diff, end_ts - window)
+            if not trades:
+                break
+            
+            yield from trades
+            
+            # If we got less than page_size, we're done
+            if len(trades) < page_size:
+                break
+            
+            # Move window forward: last timestamp + 1 second
+            last_timestamp = trades[-1].get('timestamp')
+            if not last_timestamp:
+                break
+            current_start = last_timestamp + 1
     # ==================== UTILITY ====================
     
     def get_stats(self) -> Dict[str, int]:

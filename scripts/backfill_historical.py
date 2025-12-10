@@ -45,7 +45,7 @@ def backfill_markets(conn: duckdb.DuckDBPyConnection,
         ).fetchall())
     
     existing_ids = existing_staging | existing_gold
-    if len(existing_ids)>=limit:
+    if limit is not None and len(existing_ids)>=limit:
         return 0
     print(f"  Found {len(existing_ids):,} markets already in database")
     
@@ -186,9 +186,7 @@ def backfill_prices(conn: duckdb.DuckDBPyConnection,
         
         # Extract tokens - API returns parallel arrays: clobTokenIds and outcomes
         clob_token_ids = market.get("clobTokenIds") or []
-        print("got clob_token ids:", clob_token_ids)
         clob_token_ids = clean_clob_token_ids(clob_token_ids)
-        print("cleaned clob_token ids:", clob_token_ids)
 
         # Pair them up (first token = first outcome, etc.)
         for  token_id in enumerate(clob_token_ids):
@@ -296,6 +294,7 @@ def backfill_trades(conn: duckdb.DuckDBPyConnection,
     batch_size = 100
     
     for trade in client.get_trades_for_period(start_ts=start_ts, end_ts=end_ts):
+        print(trade)
         condition_id = trade.get("conditionId")
         print("got trade:", condition_id)
         trade_ts = trade.get("timestamp")

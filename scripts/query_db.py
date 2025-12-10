@@ -18,7 +18,7 @@ def run_query(db_path: str, query: str, show_schema: bool = False):
         query: SQL query to execute
         show_schema: Also show table schemas
     """
-    conn = duckdb.connect(db_path, read_only=True)
+    conn = duckdb.connect(db_path)
     
     if show_schema:
         print("="*60)
@@ -99,7 +99,7 @@ def interactive_mode(db_path: str):
     print("\nEnter SQL query (end with semicolon):")
     print("-"*60)
     
-    conn = duckdb.connect(db_path, read_only=True)
+    conn = duckdb.connect(db_path)
     
     query_buffer = []
     
