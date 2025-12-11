@@ -8,7 +8,6 @@ from trade_fetcher import TradeFetcher
 from concurrent.futures import ThreadPoolExecutor
 import duckdb
 from pathlib import Path
-from dateutil.relativedelta import relativedelta
 
 # Database path
 DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent / "PolyMarketData"
