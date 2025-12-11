@@ -4,7 +4,7 @@ Fetches trades for a given market and time range
 """
 
 import httpx
-from typing import Optional, List, Dict, Any, Union
+from typing import List, Dict, Any, Union
 from datetime import datetime
 from queue import Queue, Empty
 import threading
