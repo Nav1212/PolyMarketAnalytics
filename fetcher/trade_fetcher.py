@@ -329,8 +329,12 @@ if __name__ == "__main__":
             end_time=end_ts
         )
         
-        print(f"\nFetched {len(trades)} total trades")
+        print(f"\nFetched {trades.qsize()} total trades")
         
-        if len(trades)==500:
-            print(f"\nFirst trade:")
-            print(trades[499])
+        if trades.qsize() == 500:
+            print(f"\n500th trade:")
+            # Retrieve the 500th trade (index 499) from the queue without losing data
+            trades_list = []
+            for _ in range(trades.qsize()):
+                trades_list.append(trades.get())
+            print(trades_list[499])
