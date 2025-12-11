@@ -6,6 +6,8 @@ Fetches trades for a given market and time range
 import httpx
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from queue import Queue
+import threading
 
 
 class TradeFetcher:
@@ -101,7 +103,7 @@ class TradeFetcher:
         market: str,
         start_time: int,
         end_time: int
-    ) -> List[Dict[str, Any]]:
+    ) -> Queue:
         """
         Fetch ALL trades for a market within a time range.
         Makes multiple requests if necessary to get all trades.
@@ -112,9 +114,9 @@ class TradeFetcher:
             end_time: End timestamp in Unix seconds
         
         Returns:
-            Complete list of all trades in the time range
+            Queue containing all trades in the time range
         """
-        all_trades = []
+        trade_queue = Queue()
         current_start = start_time
         
         while current_start < end_time:
@@ -128,7 +130,9 @@ class TradeFetcher:
             if not trades:
                 break
             
-            all_trades.extend(trades)
+            # Add each trade to the queue
+            for trade in trades:
+                trade_queue.put(trade)
             
             # Get the timestamp of the last trade to continue from there
             last_trade_ts = trades[-1].get('timestamp', 0)
@@ -140,17 +144,129 @@ class TradeFetcher:
             # Move to the next batch (start after the last trade)
             current_start = last_trade_ts + 1
         
-        return all_trades
+        return trade_queue
+    
+    def _worker(
+        self,
+        worker_id: int,
+        market_queue: Queue,
+        trade_queue: Queue,
+        start_time: int,
+        end_time: int
+    ):
+        """
+        Worker thread that fetches trades for markets from the market queue.
+        
+        Args:
+            worker_id: ID of this worker
+            market_queue: Queue containing market IDs to process
+            trade_queue: Queue to add fetched trades to
+            start_time: Start timestamp in Unix seconds
+            end_time: End timestamp in Unix seconds
+        """
+        while True:
+            try:
+                # Get market from queue (non-blocking with timeout)
+                market = market_queue.get(timeout=1)
+                if market is None:  # Sentinel value to stop worker
+                    break
+                
+                print(f"Worker {worker_id}: Processing market {market[:10]}...")
+                
+                # Fetch all trades for this market
+                current_start = start_time
+                trade_count = 0
+                
+                while current_start < end_time:
+                    trades = self.fetch_trades(
+                        market=market,
+                        start_time=current_start,
+                        end_time=end_time,
+                        limit=500
+                    )
+                    
+                    if not trades:
+                        break
+                    
+                    # Add each trade to the output queue
+                    for trade in trades:
+                        trade_queue.put(trade)
+                        trade_count += 1
+                    
+                    # Get the timestamp of the last trade to continue from there
+                    last_trade_ts = trades[-1].get('timestamp', 0)
+                    
+                    # If we got less than the limit, we've fetched everything
+                    if len(trades) < 500:
+                        break
+                    
+                    # Move to the next batch (start after the last trade)
+                    current_start = last_trade_ts + 1
+                
+                print(f"Worker {worker_id}: Fetched {trade_count} trades for market {market[:10]}")
+                market_queue.task_done()
+                
+            except Exception as e:
+                if "Empty" not in str(type(e)):
+                    print(f"Worker {worker_id}: Error - {e}")
+                break
+    
+    def fetch_trades_multithreaded(
+        self,
+        market_queue: Queue,
+        start_time: int,
+        end_time: int,
+        num_workers: int = 5
+    ) -> Queue:
+        """
+        Fetch trades for multiple markets using multiple worker threads.
+        
+        Args:
+            market_queue: Queue containing market IDs to process
+            start_time: Start timestamp in Unix seconds
+            end_time: End timestamp in Unix seconds
+            num_workers: Number of worker threads (default 5)
+        
+        Returns:
+            Queue containing all fetched trades from all markets
+        """
+        trade_queue = Queue()
+        threads = []
+        
+        print(f"Starting {num_workers} workers...")
+        
+        # Create and start worker threads
+        for i in range(num_workers):
+            thread = threading.Thread(
+                target=self._worker,
+                args=(i + 1, market_queue, trade_queue, start_time, end_time)
+            )
+            thread.start()
+            threads.append(thread)
+        
+        # Wait for all markets to be processed
+        market_queue.join()
+        
+        # Add sentinel values to stop workers
+        for _ in range(num_workers):
+            market_queue.put(None)
+        
+        # Wait for all workers to finish
+        for thread in threads:
+            thread.join()
+        
+        print(f"All workers finished. Total trades: {trade_queue.qsize()}")
+        return trade_queue
 
 
 # Example usage
 if __name__ == "__main__":
     # Example: Fetch trades for a market
     with TradeFetcher() as fetcher:
-        # Replace with actual market ID and timestamps
+
         market_id = "0x1234567890abcdef1234567890abcdef12345678"
         start_ts = int(datetime(2024, 12, 1).timestamp())
-        end_ts = int(datetime(2024, 12, 2).timestamp())
+        end_ts = int(datetime(2024, 12, 30).timestamp())
         
         print(f"Fetching trades for market {market_id[:10]}...")
         print(f"Time range: {start_ts} to {end_ts}")
@@ -163,6 +279,6 @@ if __name__ == "__main__":
         
         print(f"\nFetched {len(trades)} total trades")
         
-        if trades:
+        if len(trades)==500:
             print(f"\nFirst trade:")
-            print(trades[0])
+            print(trades[499])

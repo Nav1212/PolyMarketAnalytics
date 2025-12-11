@@ -3,55 +3,163 @@ Main entry point for the Polymarket Trade Fetcher
 """
 
 from datetime import datetime, timedelta
+from queue import Queue
 from trade_fetcher import TradeFetcher
+from concurrent.futures import ThreadPoolExecutor
+import duckdb
+from pathlib import Path
+
+# Database path
+DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent / "PolyMarketData"
+DEFAULT_DB_PATH = str(DEFAULT_DATA_DIR / "polymarket.duckdb")
+
+
+def get_active_markets_from_db(db_path: str = None, limit: int = None):
+    """
+    Query active market IDs from DuckDB silver layer (MarketDim).
+    
+    Args:
+        db_path: Path to DuckDB database (default uses DEFAULT_DB_PATH)
+        limit: Optional limit on number of markets to return
+    
+    Returns:
+        List of market external_ids (condition_ids)
+    """
+    if db_path is None:
+        db_path = DEFAULT_DB_PATH
+    
+    conn = duckdb.connect(db_path, read_only=True)
+    
+    query = """
+        SELECT external_id 
+        FROM MarketDim 
+        WHERE active = TRUE
+    """
+    
+    if limit:
+        query += f" LIMIT {limit}"
+    
+    result = conn.execute(query).fetchall()
+    conn.close()
+    
+    market_ids = [row[0] for row in result]
+    return market_ids
+
+
+def fetch_trades(market_id: str, start_time: int, end_time: int):
+    """
+    Fetch trades for a single market and time range.
+    
+    Args:
+        market_id: Market condition_id
+        start_time: Start timestamp in Unix seconds
+        end_time: End timestamp in Unix seconds
+    
+    Returns:
+        Queue containing all fetched trades
+    """
+    with TradeFetcher() as fetcher:
+        print(f"Fetching trades for market: {market_id}")
+        print(f"Time range: {start_time} to {end_time}")
+        
+        trade_queue = fetcher.fetch_all_trades(
+            market=market_id,
+            start_time=start_time,
+            end_time=end_time
+        )
+        
+        print(f"✓ Fetched {trade_queue.qsize()} trades")
+        return trade_queue
+
+
+def fetch_trades_multimarket(market_ids: list, start_time: int, end_time: int, num_workers: int = 5):
+    """
+    Fetch trades for multiple markets using worker threads.
+    
+    Args:
+        market_ids: List of market condition_ids
+        start_time: Start timestamp in Unix seconds
+        end_time: End timestamp in Unix seconds
+        num_workers: Number of worker threads (default 5)
+    
+    Returns:
+        Queue containing all fetched trades from all markets
+    """
+    # Enqueue all markets
+    market_queue = Queue()
+    for market_id in market_ids:
+        market_queue.put(market_id)
+    
+    print(f"Enqueued {len(market_ids)} markets for processing")
+    print(f"Using {num_workers} workers")
+    print(f"Time range: {start_time} to {end_time}")
+    print("=" * 60)
+    
+    # Fetch trades using multiple workers
+    with TradeFetcher() as fetcher:
+        trade_queue = fetcher.fetch_trades_multithreaded(
+            market_queue=market_queue,
+            start_time=start_time,
+            end_time=end_time,
+            num_workers=num_workers
+        )
+    
+    return trade_queue
 
 
 def main():
     """
-    Main function to fetch trades from Polymarket
+    Main function to demonstrate multi-market trade fetching
     """
-    # Initialize the fetcher
-    with TradeFetcher() as fetcher:
-        # Example market ID - replace with actual market condition_id
-        market_id = "0x1234567890abcdef1234567890abcdef12345678"
-        
-        # Set time range - last 24 hours as example
-        end_time = datetime.now()
-        start_time = end_time - timedelta(hours=24)
-        
-        # Convert to Unix timestamps
-        start_ts = int(start_time.timestamp())
-        end_ts = int(end_time.timestamp())
-        
+    # Query active market IDs from DuckDB silver layer
+    print("Querying active markets from DuckDB...")
+    market_ids = get_active_markets_from_db(limit=5)
+    
+    if not market_ids:
+        print("No active markets found in database!")
+        return
+    
+    print(f"Found {len(market_ids)} active markets")
+    
+    # Set time range - last 24 hours as example
+    end_time = datetime.now()
+    start_time = end_time - timedelta(hours=24)
+    
+    # Convert to Unix timestamps
+    start_ts = int(start_time.timestamp())
+    end_ts = int(end_time.timestamp())
+    
+    print("=" * 60)
+    print("Polymarket Multi-Market Trade Fetcher")
+    print("=" * 60)
+    print(f"Markets: {len(market_ids)}")
+    print(f"Start Time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"End Time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+    print()
+    
+    # Fetch trades using multiple workers
+    trade_queue = fetch_trades_multimarket(
+        market_ids=market_ids,
+        start_time=start_ts,
+        end_time=end_ts,
+        num_workers=5
+    )
+    
+    # Display sample trades if available
+    if not trade_queue.empty():
+        print("\n" + "=" * 60)
+        print("Sample Trades (first 3):")
         print("=" * 60)
-        print("Polymarket Trade Fetcher")
-        print("=" * 60)
-        print(f"Market ID: {market_id}")
-        print(f"Start Time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"End Time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print("=" * 60)
         
-        # Fetch all trades in the time range
-        print("\nFetching trades...")
-        trades = fetcher.fetch_all_trades(
-            market=market_id,
-            start_time=start_ts,
-            end_time=end_ts
-        )
-        
-        print(f"\n✓ Fetched {len(trades)} trades")
-        
-        # Display sample trades if available
-        if trades:
-            print("\n" + "=" * 60)
-            print("Sample Trades (first 3):")
-            print("=" * 60)
-            for i, trade in enumerate(trades[:3], 1):
-                print(f"\nTrade {i}:")
-                for key, value in trade.items():
-                    print(f"  {key}: {value}")
-        else:
-            print("\nNo trades found for the specified time range.")
+        sample_count = min(3, trade_queue.qsize())
+        for i in range(sample_count):
+            trade = trade_queue.get()
+            print(f"\nTrade {i + 1}:")
+            for key, value in trade.items():
+                print(f"  {key}: {value}")
+    else:
+        print("\nNo trades found for the specified time range.")
 
 
 if __name__ == "__main__":
