@@ -6,7 +6,6 @@ to timestamped parquet files when the threshold is reached.
 """
 
 import threading
-import time
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional
