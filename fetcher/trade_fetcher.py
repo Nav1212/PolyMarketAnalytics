@@ -9,7 +9,6 @@ from datetime import datetime
 from queue import Queue
 import threading
 
-
 class TradeFetcher:
     """
     Simple class to fetch trades from Polymarket Data API
@@ -211,7 +210,7 @@ class TradeFetcher:
                     print(f"Worker {worker_id}: Error - {e}")
                 break
     
-    def fetch_trades_multithreaded(
+    def fetch_trades_multithreaded_testing(
         self,
         market_queue: Queue,
         start_time: int,
@@ -243,19 +242,20 @@ class TradeFetcher:
             )
             thread.start()
             threads.append(thread)
-        
-        # Wait for all markets to be processed
-        market_queue.join()
-        
         # Add sentinel values to stop workers
         for _ in range(num_workers):
             market_queue.put(None)
+
+        # Wait for all markets to be processed
+        market_queue.join()
+        
         
         # Wait for all workers to finish
         for thread in threads:
             thread.join()
         
         print(f"All workers finished. Total trades: {trade_queue.qsize()}")
+        
         return trade_queue
 
 

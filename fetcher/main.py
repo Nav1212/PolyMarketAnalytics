@@ -8,15 +8,16 @@ from trade_fetcher import TradeFetcher
 from concurrent.futures import ThreadPoolExecutor
 import duckdb
 from pathlib import Path
+from dateutil.relativedelta import relativedelta
 
 # Database path
 DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent / "PolyMarketData"
 DEFAULT_DB_PATH = str(DEFAULT_DATA_DIR / "polymarket.duckdb")
 
 
-def get_active_markets_from_db(db_path: str = None, limit: int = None):
+def get_inactive_markets_from_db(time: datetime, limit: int = None ):
     """
-    Query active market IDs from DuckDB silver layer (MarketDim).
+    Query inactive market IDs from DuckDB silver layer (MarketDim).
     
     Args:
         db_path: Path to DuckDB database (default uses DEFAULT_DB_PATH)
@@ -25,22 +26,22 @@ def get_active_markets_from_db(db_path: str = None, limit: int = None):
     Returns:
         List of market external_ids (condition_ids)
     """
-    if db_path is None:
-        db_path = DEFAULT_DB_PATH
+    db_path = DEFAULT_DB_PATH
     
-    conn = duckdb.connect(db_path, read_only=True)
     
     query = """
         SELECT external_id 
         FROM MarketDim 
-        WHERE active = TRUE
+        where end_date_iso < ?
+        ORDER BY end_date_iso DESC
     """
-    
+    params = [time]
+
     if limit:
-        query += f" LIMIT {limit}"
-    
-    result = conn.execute(query).fetchall()
-    conn.close()
+        query += " LIMIT ?"
+        params.append(limit)
+    with duckdb.connect(db_path, read_only=True) as conn:
+        result = conn.execute(query, params).fetchall()
     
     market_ids = [row[0] for row in result]
     return market_ids
@@ -97,7 +98,7 @@ def fetch_trades_multimarket(market_ids: list, start_time: int, end_time: int, n
     
     # Fetch trades using multiple workers
     with TradeFetcher() as fetcher:
-        trade_queue = fetcher.fetch_trades_multithreaded(
+        trade_queue = fetcher.fetch_trades_multithreaded_testing(
             market_queue=market_queue,
             start_time=start_time,
             end_time=end_time,
@@ -111,19 +112,21 @@ def main():
     """
     Main function to demonstrate multi-market trade fetching
     """
-    # Query active market IDs from DuckDB silver layer
-    print("Querying active markets from DuckDB...")
-    market_ids = get_active_markets_from_db(limit=5)
+
+        # Set time range 
+    end_time = datetime.now()
+    start_time = datetime.fromtimestamp(0)
+    # Query active market IDs from DuckDB silver layer limiting to 50 for testing 
+    print("Querying inactive markets from DuckDB...")
+    market_ids = get_inactive_markets_from_db(end_time, limit=50)
     
     if not market_ids:
-        print("No active markets found in database!")
+        print("No inactive markets found in database!")
         return
     
     print(f"Found {len(market_ids)} active markets")
     
-    # Set time range - last 24 hours as example
-    end_time = datetime.now()
-    start_time = end_time - timedelta(hours=24)
+
     
     # Convert to Unix timestamps
     start_ts = int(start_time.timestamp())
