@@ -2,7 +2,7 @@
 Main entry point for the Polymarket Trade Fetcher
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from queue import Queue
 from trade_fetcher import TradeFetcher
 from concurrent.futures import ThreadPoolExecutor
