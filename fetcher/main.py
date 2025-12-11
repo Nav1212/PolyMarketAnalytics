@@ -33,7 +33,7 @@ def get_inactive_markets_from_db(time: datetime, limit: int = None ):
         SELECT external_id 
         FROM MarketDim 
         where end_date_iso < ?
-        ORDER BY end_date_iso DESC
+        ORDER BY end_date_iso desc
     """
     params = [time]
 
@@ -117,9 +117,9 @@ def main():
         #i use a time range that covers all of polymarket history
     end_time = datetime.now()
     start_time = datetime(2000, 1, 1)
-    # Query active market IDs from DuckDB silver layer limiting to 50 for testing 
+    # Query active market IDs from DuckDB silver layer limiting to 5 for testing 
     print("Querying inactive markets from DuckDB...")
-    market_ids = get_inactive_markets_from_db(end_time, limit=50)
+    market_ids = get_inactive_markets_from_db(end_time, limit=5)
     
     if not market_ids:
         print("No inactive markets found in database!")

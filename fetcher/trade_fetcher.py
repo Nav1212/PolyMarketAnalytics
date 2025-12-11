@@ -4,16 +4,19 @@ Fetches trades for a given market and time range
 """
 
 import httpx
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
 from queue import Queue, Empty
 import threading
-import time 
+import time
+
+from swappable_queue import SwappableQueue
+from parquet_persister import ParquetPersister, create_persisted_queue
 class TradeFetcher:
     """
     Simple class to fetch trades from Polymarket Data API
     """
-    RATE = 7  # requests per second
+    RATE = 74  # requests per second
     tokens = RATE
     last_refill = time.time()
     lock = threading.Lock()
@@ -27,7 +30,7 @@ class TradeFetcher:
                 elapsed = now - cls.last_refill
 
                 # Refill tokens every second
-                if elapsed >= 1.0:
+                if elapsed >= 10.0:
                     cls.tokens = cls.RATE
                     cls.last_refill = now
 
@@ -177,7 +180,7 @@ class TradeFetcher:
         self,
         worker_id: int,
         market_queue: Queue,
-        trade_queue: Queue,
+        trade_queue: Union[Queue, SwappableQueue],
         start_time: int,
         end_time: int
     ):
@@ -187,17 +190,21 @@ class TradeFetcher:
         Args:
             worker_id: ID of this worker
             market_queue: Queue containing market IDs to process
-            trade_queue: Queue to add fetched trades to
+            trade_queue: Queue to add fetched trades to (Queue or SwappableQueue)
             start_time: Start timestamp in Unix seconds
             end_time: End timestamp in Unix seconds
         """
+        # Determine which put method to use based on queue type
+        is_swappable = isinstance(trade_queue, SwappableQueue)
+        
         while True:
             try:
                 # Get market from queue (non-blocking with timeout)
                 market = market_queue.get(timeout=1)
                 if market is None:
                     market_queue.task_done()
-                    trade_queue.put(None)
+                    if not is_swappable:
+                        trade_queue.put(None)
                     return
                 
                 print(f"Worker {worker_id}: Processing market {market[:10]}...")
@@ -217,22 +224,26 @@ class TradeFetcher:
                     if not trades:
                         break
                     
-                    # Add each trade to the output queue
-                    for trade in trades:
-                        trade_queue.put(trade)
-                        trade_count += 1
+                    # Add trades to the output queue
+                    if is_swappable:
+                        # Batch add for efficiency
+                        trade_queue.put_many(trades)
+                        trade_count += len(trades)
+                    else:
+                        for trade in trades:
+                            trade_queue.put(trade)
+                            trade_count += 1
                     
                     # Get the timestamp of the last trade to continue from there
-                    last_trade_ts = trades[-1].get('timestamp', 0)
+                    last_trade_ts = trades[-1].get('timestamp', 0)+1
                     
                     # If we got less than the limit, we've fetched everything
                     if len(trades) < 500:
                         break
-                    
+                    print(f"Worker {worker_id}: Fetched {trade_count} trades so far with the last timestamp of {last_trade_ts}")
                     # Move to the next batch (start after the last trade)
                     current_start = last_trade_ts + 1
-                
-                print(f"Worker {worker_id}: Fetched {trade_count} trades for market {market[:10]}")
+                print(f"Worker {worker_id}: Finished market {market[:10]}, total trades: {trade_count}")                
                 market_queue.task_done()
             except Empty:
                 # Timeout on get() → loop again, don't exit
@@ -242,7 +253,8 @@ class TradeFetcher:
                 print(f"Worker {worker_id}: Error - {e}")
                 if market is not None:
                     market_queue.task_done()
-                trade_queue.put(None)
+                if not is_swappable:
+                    trade_queue.put(None)
                 return
     
     def fetch_trades_multithreaded_testing(
@@ -250,7 +262,8 @@ class TradeFetcher:
         market_queue: Queue,
         start_time: int,
         end_time: int,
-        num_workers: int = 5
+        num_workers: int = 5,
+        batch_threshold: int = 1000000
     ) -> Queue:
         """
         Fetch trades for multiple markets using multiple worker threads.
@@ -264,7 +277,12 @@ class TradeFetcher:
         Returns:
             Queue containing all fetched trades from all markets
         """
-        trade_queue = Queue()
+        # Create persisted queue
+        trade_queue, persister = create_persisted_queue(
+            threshold=batch_threshold,
+            output_dir="data/trades",
+            auto_start=True
+        )
         threads = []        
         # Create and start worker threads
         for i in range(num_workers):
@@ -275,19 +293,20 @@ class TradeFetcher:
             thread.start()
             threads.append(thread)
         # Add sentinel values to stop workers
-        for _ in range(num_workers):
-            market_queue.put(None)
+
             
 
         # Wait for all markets to be processed
         market_queue.join()
-        
+        for _ in range(num_workers):
+            market_queue.put(None)        
         
         # Wait for all workers to finish
         for thread in threads:
             thread.join()
         
         print(f"All workers finished.")
+        persister.stop()
         
         return trade_queue
 
