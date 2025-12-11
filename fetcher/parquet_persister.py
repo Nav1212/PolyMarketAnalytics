@@ -33,7 +33,8 @@ TRADE_SCHEMA = pa.schema([
     ('price', pa.float64()),
     ('size', pa.float64()),
     ('conditionId', pa.string()),
-    ('timestamp', pa.int64())
+    ('timestamp', pa.int64()),
+    ('transactionHash', pa.string()),
     # ('side', pa.string()),
     # ('maker', pa.string()),
     # ('taker', pa.string()),

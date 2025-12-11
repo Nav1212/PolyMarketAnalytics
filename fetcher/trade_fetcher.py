@@ -16,7 +16,7 @@ class TradeFetcher:
     """
     Simple class to fetch trades from Polymarket Data API
     """
-    RATE = 74  # requests per second
+    RATE = 100  # requests per second
     tokens = RATE
     last_refill = time.time()
     lock = threading.Lock()
@@ -154,7 +154,7 @@ class TradeFetcher:
                 market=market,
                 start_time=current_start,
                 end_time=end_time,
-                limit=500
+                limit=5000
             )
             
             if not trades:
