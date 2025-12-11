@@ -31,7 +31,7 @@ class SwappableQueue:
         Initialize the swappable queue.
         
         Args:
-            threshold: Number of items that triggers a swap (default 10000)
+            threshold: Number of items that triggers a swap (default 1000000)
         """
         self._buffer: deque = deque()
         self._lock = threading.Lock()
