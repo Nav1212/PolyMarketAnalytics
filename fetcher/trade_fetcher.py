@@ -8,12 +8,37 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from queue import Queue, Empty
 import threading
-
+import time 
 class TradeFetcher:
     """
     Simple class to fetch trades from Polymarket Data API
     """
-    
+    RATE = 7  # requests per second
+    tokens = RATE
+    last_refill = time.time()
+    lock = threading.Lock()
+
+
+    @classmethod
+    def acquire_token(cls):
+        while True:
+            with cls.lock:
+                now = time.time()
+                elapsed = now - cls.last_refill
+
+                # Refill tokens every second
+                if elapsed >= 1.0:
+                    cls.tokens = cls.RATE
+                    cls.last_refill = now
+
+                # If token available → consume and proceed
+                if cls.tokens > 0:
+                    cls.tokens -= 1
+                    return  # you now have permission
+            
+            # No token available → sleep very briefly and try again
+            time.sleep(0.01)
+
     DATA_API_BASE = "https://data-api.polymarket.com"
     
     def __init__(self, timeout: float = 30.0):
@@ -76,6 +101,9 @@ class TradeFetcher:
             "endTs": end_time,
             "limit": limit
         }
+        
+        # Acquire rate limit token before making request
+        self.acquire_token()
         
         try:
             response = self.client.get(

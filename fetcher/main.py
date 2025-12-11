@@ -113,9 +113,10 @@ def main():
     Main function to demonstrate multi-market trade fetching
     """
 
-        # Set time range 
+        # Set time range
+        #i use a time range that covers all of polymarket history
     end_time = datetime.now()
-    start_time = datetime.fromtimestamp(0)
+    start_time = datetime(2000, 1, 1)
     # Query active market IDs from DuckDB silver layer limiting to 50 for testing 
     print("Querying inactive markets from DuckDB...")
     market_ids = get_inactive_markets_from_db(end_time, limit=50)
