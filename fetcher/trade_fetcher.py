@@ -6,7 +6,7 @@ Fetches trades for a given market and time range
 import httpx
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from queue import Queue
+from queue import Queue, Empty
 import threading
 
 class TradeFetcher:
@@ -167,8 +167,10 @@ class TradeFetcher:
             try:
                 # Get market from queue (non-blocking with timeout)
                 market = market_queue.get(timeout=1)
-                if market is None:  # Sentinel value to stop worker
-                    break
+                if market is None:
+                    market_queue.task_done()
+                    trade_queue.put(None)
+                    return
                 
                 print(f"Worker {worker_id}: Processing market {market[:10]}...")
                 
@@ -204,11 +206,16 @@ class TradeFetcher:
                 
                 print(f"Worker {worker_id}: Fetched {trade_count} trades for market {market[:10]}")
                 market_queue.task_done()
-                
+            except Empty:
+                # Timeout on get() → loop again, don't exit
+                continue
+               
             except Exception as e:
-                if "Empty" not in str(type(e)):
-                    print(f"Worker {worker_id}: Error - {e}")
-                break
+                print(f"Worker {worker_id}: Error - {e}")
+                if market is not None:
+                    market_queue.task_done()
+                trade_queue.put(None)
+                return
     
     def fetch_trades_multithreaded_testing(
         self,
@@ -230,10 +237,7 @@ class TradeFetcher:
             Queue containing all fetched trades from all markets
         """
         trade_queue = Queue()
-        threads = []
-        
-        print(f"Starting {num_workers} workers...")
-        
+        threads = []        
         # Create and start worker threads
         for i in range(num_workers):
             thread = threading.Thread(
@@ -245,6 +249,7 @@ class TradeFetcher:
         # Add sentinel values to stop workers
         for _ in range(num_workers):
             market_queue.put(None)
+            
 
         # Wait for all markets to be processed
         market_queue.join()
@@ -254,7 +259,7 @@ class TradeFetcher:
         for thread in threads:
             thread.join()
         
-        print(f"All workers finished. Total trades: {trade_queue.qsize()}")
+        print(f"All workers finished.")
         
         return trade_queue
 
