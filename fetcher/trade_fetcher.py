@@ -154,7 +154,7 @@ class TradeFetcher:
                 market=market,
                 start_time=current_start,
                 end_time=end_time,
-                limit=5000
+                limit=500
             )
             
             if not trades:
