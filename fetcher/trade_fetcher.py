@@ -16,7 +16,7 @@ class TradeFetcher:
     """
     Simple class to fetch trades from Polymarket Data API
     """
-    RATE = 100  # requests per second
+    RATE = 70  # requests per 10 second
     tokens = RATE
     last_refill = time.time()
     lock = threading.Lock()
@@ -72,8 +72,9 @@ class TradeFetcher:
     def fetch_trades(
         self,
         market: str,
-        start_time: int,
-        end_time: int,
+        filtertype: str ="",
+        filteramount: int =0,
+        offset: int =0,
         limit: int = 500
     ) -> List[Dict[str, Any]]:
         """
@@ -100,9 +101,10 @@ class TradeFetcher:
         """
         params = {
             "market": market,
-            "startTs": start_time,
-            "endTs": end_time,
-            "limit": limit
+            "limit": limit,
+            "offset": offset,
+            "filterType": filtertype,
+            "filterAmount": filteramount,
         }
         
         # Acquire rate limit token before making request
@@ -148,12 +150,14 @@ class TradeFetcher:
         """
         trade_queue = Queue()
         current_start = start_time
-        
+        offset=0
+        filteramount = 0 
         while current_start < end_time:
             trades = self.fetch_trades(
                 market=market,
-                start_time=current_start,
-                end_time=end_time,
+                offset=offset,
+                filtertype ="cash",
+                filteramount=filteramount,
                 limit=500
             )
             
@@ -164,15 +168,13 @@ class TradeFetcher:
             for trade in trades:
                 trade_queue.put(trade)
             
-            # Get the timestamp of the last trade to continue from there
-            last_trade_ts = trades[-1].get('timestamp', 0)
             
-            # If we got less than the limit, we've fetched everything
-            if len(trades) < 500:
+            if len(trades) < 500 :
                 break
-            
-            # Move to the next batch (start after the last trade)
-            current_start = last_trade_ts + 1
+            if(offset>=1000):
+                offset=0
+                filteramount += max(trades, key=lambda x: x['size'])['size'] 
+            offset+=500
         
         return trade_queue
     
@@ -212,13 +214,12 @@ class TradeFetcher:
                 # Fetch all trades for this market
                 current_start = start_time
                 trade_count = 0
-                
+                offset =0 
                 while current_start < end_time:
                     trades = self.fetch_trades(
                         market=market,
-                        start_time=current_start,
-                        end_time=end_time,
-                        limit=500
+                        limit=500,
+                        offset=offset
                     )
                     
                     if not trades:
@@ -238,8 +239,9 @@ class TradeFetcher:
                     last_trade_ts = trades[-1].get('timestamp', 0)+1
                     
                     # If we got less than the limit, we've fetched everything
-                    if len(trades) < 500:
+                    if len(trades) < 500 or offset>=1000:
                         break
+                    offset+=500
                     print(f"Worker {worker_id}: Fetched {trade_count} trades so far with the last timestamp of {last_trade_ts}")
                     # Move to the next batch (start after the last trade)
                     current_start = last_trade_ts + 1

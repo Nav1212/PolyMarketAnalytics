@@ -79,6 +79,11 @@ class SwappableQueue:
         with self._lock:
             return self._item_count
     
+    def empty(self) -> bool:
+        """Check if queue is empty. Compatible with Queue interface."""
+        with self._lock:
+            return self._item_count == 0
+    
     def should_swap(self) -> bool:
         """Check if queue has reached threshold."""
         with self._lock:
