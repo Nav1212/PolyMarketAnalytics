@@ -3,9 +3,14 @@
 *.duckdb.wal
 database/
 
+
 # Parquet archive files (stored outside repo in ../PolyMarketData/archive/)
 *.parquet
 archive/
+
+# Data folder - ignore everything inside
+data/
+data/**
 
 # Python
 __pycache__/
@@ -14,10 +19,10 @@ __pycache__/
 .env
 venv/
 .venv/
+.parquet
 
 # IDE
 .vscode/
 .idea/
-
 # Logs
 *.log

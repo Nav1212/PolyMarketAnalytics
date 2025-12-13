@@ -69,7 +69,7 @@ class TradeFetcher:
     def __exit__(self, *args):
         self.close()
     
-    def fetch_leaderboard(market: str)-> List[Dict[str, Any]]:
+    def fetch_leaderboard(self,market: str,category: str,timePeriod: str)-> List[Dict[str, Any]]:
         """
         Fetch leaderboard for a specific market.
         
@@ -84,30 +84,37 @@ class TradeFetcher:
             >>> for entry in leaderboard:
             ...     print(entry)
         """
-        params = {
-            "market": market
-        }
-        
-        try:
-            response = httpx.get(
-                f"{TradeFetcher.DATA_API_BASE}/leaderboard",
-                params=params,
-                timeout=30.0
-            )
-            response.raise_for_status()
-            return response.json()
-        
-        except httpx.HTTPStatusError as e:
-            print(f"HTTP error fetching leaderboard: {e.response.status_code} - {e.response.text}")
-            return []
-        
-        except httpx.RequestError as e:
-            print(f"Request error fetching leaderboard: {e}")
-            return []
-        
-        except Exception as e:
-            print(f"Unexpected error fetching leaderboard: {e}")
-            return []
+        offset = 0 
+        while offset<10000:
+
+            params = {
+                "category": category,
+                "market": market,
+                "timePeriod": timePeriod,
+                "orderBy": "VOL",
+                "limit": 50,
+                "offset": offset
+            }
+            self.acquire_token()
+            try:
+                response = self.client.get(
+                    f"{TradeFetcher.DATA_API_BASE}/v1/leaderboard",
+                    params=params,
+                    timeout=30.0
+                )
+                yield response 
+                offset +=50
+            except httpx.HTTPStatusError as e:
+                print(f"HTTP error fetching leaderboard: {e.response.status_code} - {e.response.text}")
+                return []
+            
+            except httpx.RequestError as e:
+                print(f"Request error fetching leaderboard: {e}")
+                return []
+            
+            except Exception as e:
+                print(f"Unexpected error fetching leaderboard: {e}")
+                return []
 
     def fetch_price_history(market: str)->List[Dict[str, Any]]:
         """
@@ -285,7 +292,7 @@ class TradeFetcher:
                     if len(trades) < 500:
                         break
                     if offset >=1000:
-                        filteramount += median_size
+                        filteramount += int(median_size)
                         offset =0
                     offset+=500
 

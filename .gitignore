@@ -1,0 +1,22 @@
+# Data files
+data/
+*.parquet
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+.venv/
+
+# Database files
+*.duckdb
+*.duckdb.wal
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
