@@ -34,7 +34,7 @@ TRADE_SCHEMA = pa.schema([
     ('conditionId', pa.string()),
     ('timestamp', pa.int64()),
     ('transactionHash', pa.string()),
-    # ('side', pa.string()),
+    ('outcome', pa.string())
     # ('maker', pa.string()),
     # ('taker', pa.string()),
     # ('market', pa.string()),

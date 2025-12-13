@@ -252,16 +252,15 @@ class TradeFetcher:
                 print(f"Worker {worker_id}: Processing market {market[:10]}...")
                 
                 # Fetch all trades for this market
-                current_start = start_time
                 trade_count = 0
                 offset =0 
                 filteramount = 0 
-                while current_start < end_time:
+                while True:
                     trades = self.fetch_trades(
                         market=market,
                         limit=500,
                         offset=offset,
-                        filtertype ="cash",
+                        filtertype ="CASH",
                         filteramount=filteramount
                     )
                     
@@ -281,17 +280,17 @@ class TradeFetcher:
                     # Set floor to 50th percentile of trade sizes
                     sizes = sorted([t['size'] for t in trades])
                     median_size = sizes[len(sizes) // 2]
-                    filteramount += median_size
                     # Get the timestamp of the last trade to continue from there
-                    last_trade_ts = trades[-1].get('timestamp', 0)+1
-                    
                     # If we got less than the limit, we've fetched everything
-                    if len(trades) < 500 or offset>=1000:
+                    if len(trades) < 500:
                         break
+                    if offset >=1000:
+                        filteramount += median_size
+                        offset =0
                     offset+=500
-                    print(f"Worker {worker_id}: Fetched {trade_count} trades so far with the last timestamp of {last_trade_ts}")
+
+                    print(f"Worker {worker_id}: Fetched {trade_count} ")
                     # Move to the next batch (start after the last trade)
-                    current_start = last_trade_ts + 1
                 print(f"Worker {worker_id}: Finished market {market[:10]}, total trades: {trade_count}")                
                 market_queue.task_done()
             except Empty:
