@@ -142,7 +142,7 @@ def transform_markets(conn: duckdb.DuckDBPyConnection) -> int:
     max_id = conn.execute("SELECT COALESCE(MAX(market_id), 0) FROM MarketDim").fetchone()[0]
     
     conn.execute("""
-        INSERT INTO MarketDim (market_id, external_id, event_id, question, active, end_date_iso)
+        INSERT INTO MarketDim (market_id, external_id, event_id, question, active, start_date_iso, end_date_iso, VolumeNum)
         SELECT 
             ? + ROW_NUMBER() OVER (ORDER BY s.condition_id) as market_id,
             s.condition_id as external_id,
@@ -158,8 +158,12 @@ def transform_markets(conn: duckdb.DuckDBPyConnection) -> int:
                 TRUE
             ) as active,
             TRY_CAST(
+                json_extract_string(s.raw_json, '$.startDate') AS TIMESTAMP
+            ) as start_date_iso,
+            TRY_CAST(
                 json_extract_string(s.raw_json, '$.endDate') AS TIMESTAMP
-            ) as end_date_iso
+            ) as end_date_iso,
+            json_extract_string(s.raw_json, '$.solumeNum') as VolumeNum
         FROM stg_markets_raw s
         LEFT JOIN EventDim e ON e.slug = COALESCE(
             json_extract_string(s.raw_json, '$.event.slug'),
