@@ -69,13 +69,101 @@ class TradeFetcher:
     def __exit__(self, *args):
         self.close()
     
+    def fetch_leaderboard(market: str)-> List[Dict[str, Any]]:
+        """
+        Fetch leaderboard for a specific market.
+        
+        Args:
+            market: Market condition_id (e.g., "0x123abc...")
+        
+        Returns:
+            List of leaderboard entries
+        
+        Example:
+            >>> leaderboard = TradeFetcher.fetch_leaderboard("0x123abc...")
+            >>> for entry in leaderboard:
+            ...     print(entry)
+        """
+        params = {
+            "market": market
+        }
+        
+        try:
+            response = httpx.get(
+                f"{TradeFetcher.DATA_API_BASE}/leaderboard",
+                params=params,
+                timeout=30.0
+            )
+            response.raise_for_status()
+            return response.json()
+        
+        except httpx.HTTPStatusError as e:
+            print(f"HTTP error fetching leaderboard: {e.response.status_code} - {e.response.text}")
+            return []
+        
+        except httpx.RequestError as e:
+            print(f"Request error fetching leaderboard: {e}")
+            return []
+        
+        except Exception as e:
+            print(f"Unexpected error fetching leaderboard: {e}")
+            return []
+
+    def fetch_price_history(market: str)->List[Dict[str, Any]]:
+        """
+        Fetch price history for a specific market.
+        
+        Args:
+            market: Market condition_id (e.g., "0x123abc...")
+        
+        Returns:
+            List of price history entries
+        
+        Example:
+            >>> price_history = TradeFetcher.fetch_price_history("0x123abc...")
+            >>> for entry in price_history:
+            ...     print(entry)
+        """
+        start_ts = 0
+        end_ts = datetime.now().timestamp()   
+        while start_ts < end_ts:
+            params = {
+                "market": market,
+                "startTs": start_ts,
+                "endTs": end_ts,
+                "resolution": "1m"
+            }
+            
+            try:
+                response = httpx.get(
+                    f"{TradeFetcher.DATA_API_BASE}/price-history",
+                    params=params,
+                    timeout=30.0
+                )
+        
+            
+            except httpx.HTTPStatusError as e:
+                print(f"HTTP error fetching price history: {e.response.status_code} - {e.response.text}")
+                return []
+            
+            except httpx.RequestError as e:
+                print(f"Request error fetching price history: {e}")
+                return []
+            
+            except Exception as e:
+                print(f"Unexpected error fetching price history: {e}")
+                return []
+        return response
+
+
     def fetch_trades(
         self,
         market: str,
         filtertype: str ="",
         filteramount: int =0,
         offset: int =0,
-        limit: int = 500
+        limit: int = 500,
+        user_id: str =""
     ) -> List[Dict[str, Any]]:
         """
         Fetch trades for a specific market within a time range.
@@ -130,7 +218,7 @@ class TradeFetcher:
             print(f"Unexpected error fetching trades: {e}")
             return []
     
-    def fetch_all_trades(
+    def fetch_top_trades(
         self,
         market: str,
         start_time: int,
@@ -215,11 +303,14 @@ class TradeFetcher:
                 current_start = start_time
                 trade_count = 0
                 offset =0 
+                filteramount = 0 
                 while current_start < end_time:
                     trades = self.fetch_trades(
                         market=market,
                         limit=500,
-                        offset=offset
+                        offset=offset,
+                        filtertype ="cash",
+                        filteramount=filteramount
                     )
                     
                     if not trades:
