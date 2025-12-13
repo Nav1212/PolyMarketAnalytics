@@ -218,54 +218,6 @@ class TradeFetcher:
             print(f"Unexpected error fetching trades: {e}")
             return []
     
-    def fetch_top_trades(
-        self,
-        market: str,
-        start_time: int,
-        end_time: int
-    ) -> Queue:
-        """
-        Fetch ALL trades for a market within a time range.
-        Makes multiple requests if necessary to get all trades.
-        
-        Args:
-            market: Market condition_id
-            start_time: Start timestamp in Unix seconds
-            end_time: End timestamp in Unix seconds
-        
-        Returns:
-            Queue containing all trades in the time range
-        """
-        trade_queue = Queue()
-        current_start = start_time
-        offset=0
-        filteramount = 0 
-        while current_start < end_time:
-            trades = self.fetch_trades(
-                market=market,
-                offset=offset,
-                filtertype ="cash",
-                filteramount=filteramount,
-                limit=500
-            )
-            
-            if not trades:
-                break
-            
-            # Add each trade to the queue
-            for trade in trades:
-                trade_queue.put(trade)
-            
-            
-            if len(trades) < 500 :
-                break
-            if(offset>=1000):
-                offset=0
-                filteramount += max(trades, key=lambda x: x['size'])['size'] 
-            offset+=500
-        
-        return trade_queue
-    
     def _worker(
         self,
         worker_id: int,
@@ -326,6 +278,10 @@ class TradeFetcher:
                             trade_queue.put(trade)
                             trade_count += 1
                     
+                    # Set floor to 50th percentile of trade sizes
+                    sizes = sorted([t['size'] for t in trades])
+                    median_size = sizes[len(sizes) // 2]
+                    filteramount += median_size
                     # Get the timestamp of the last trade to continue from there
                     last_trade_ts = trades[-1].get('timestamp', 0)+1
                     
