@@ -9,11 +9,20 @@ import threading
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from queue import Queue, Empty
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 from swappable_queue import SwappableQueue
+from enum import Enum
+
+
+class DataType(Enum):
+    """Supported data types for parquet persistence."""
+    TRADE = "trade"
+    MARKET = "market"
+    MARKET_TOKEN = "market_token"
 
 
 # =============================================================================
@@ -86,7 +95,8 @@ class ParquetPersister:
         queue: SwappableQueue,
         output_dir: str = "data/trades",
         poll_interval: float = 0.5,
-        use_hive_partitioning: bool = True
+        use_hive_partitioning: bool = True,
+        data_type: DataType = DataType.TRADE
     ):
         """
         Initialize the parquet persister.
@@ -96,18 +106,24 @@ class ParquetPersister:
             output_dir: Base directory for parquet files
             poll_interval: Seconds between threshold checks (default 0.5s)
             use_hive_partitioning: If True, partition by date (dt=YYYY-MM-DD/)
+            data_type: Type of data being persisted (TRADE, MARKET, MARKET_TOKEN)
         """
         self._queue = queue
         self._output_dir = Path(output_dir)
         self._poll_interval = poll_interval
         self._use_hive_partitioning = use_hive_partitioning
+        self._data_type = data_type
         
         # Create output directory
         self._output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Monitor thread
+        # Monitor thread (watches data queue for threshold)
         self._monitor_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        
+        # Dedicated writer thread with its own write queue
+        self._write_queue: Queue = Queue()
+        self._writer_thread: Optional[threading.Thread] = None
         
         # Stats
         self._files_written = 0
@@ -115,27 +131,37 @@ class ParquetPersister:
         self._lock = threading.Lock()
     
     def start(self) -> None:
-        """Start the monitor thread."""
+        """Start the monitor thread and dedicated writer thread."""
         if self._monitor_thread is not None and self._monitor_thread.is_alive():
             return
         
         self._stop_event.clear()
+        
+        # Start dedicated writer thread
+        self._writer_thread = threading.Thread(
+            target=self._writer_loop,
+            name=f"ParquetPersister-Writer-{self._data_type.value}",
+            daemon=True
+        )
+        self._writer_thread.start()
+        
+        # Start monitor thread
         self._monitor_thread = threading.Thread(
             target=self._monitor_loop,
-            name="ParquetPersister-Monitor",
+            name=f"ParquetPersister-Monitor-{self._data_type.value}",
             daemon=True
         )
         self._monitor_thread.start()
-        print(f"[ParquetPersister] Started monitoring queue (threshold={self._queue._threshold})")
+        print(f"[ParquetPersister-{self._data_type.value}] Started monitoring queue (threshold={self._queue._threshold})")
     
     def stop(self, timeout: float = 30.0) -> None:
         """
-        Stop the monitor thread and flush remaining items.
+        Stop the monitor and writer threads, flush remaining items.
         
         Args:
-            timeout: Maximum seconds to wait for thread to finish
+            timeout: Maximum seconds to wait for threads to finish
         """
-        print("[ParquetPersister] Stopping...")
+        print(f"[ParquetPersister-{self._data_type.value}] Stopping...")
         
         # Signal shutdown
         self._stop_event.set()
@@ -145,16 +171,23 @@ class ParquetPersister:
         if self._monitor_thread is not None:
             self._monitor_thread.join(timeout=timeout)
         
-        # Flush any remaining items
+        # Flush any remaining items from data queue to write queue
         remaining = self._queue.drain()
         if remaining:
-            print(f"[ParquetPersister] Flushing {len(remaining)} remaining items...")
-            self._write_parquet(remaining)
+            print(f"[ParquetPersister-{self._data_type.value}] Flushing {len(remaining)} remaining items...")
+            self._write_queue.put(remaining)
         
-        print(f"[ParquetPersister] Stopped. Total files: {self._files_written}, Total records: {self._total_records_written}")
+        # Send sentinel to stop writer thread
+        self._write_queue.put(None)
+        
+        # Wait for writer thread to finish processing
+        if self._writer_thread is not None:
+            self._writer_thread.join(timeout=timeout)
+        
+        print(f"[ParquetPersister-{self._data_type.value}] Stopped. Total files: {self._files_written}, Total records: {self._total_records_written}")
     
     def _monitor_loop(self) -> None:
-        """Main loop that monitors queue and triggers writes."""
+        """Main loop that monitors data queue and sends batches to writer."""
         while not self._stop_event.is_set():
             # Wait for threshold or timeout
             triggered = self._queue.wait_for_threshold(timeout=self._poll_interval)
@@ -167,15 +200,49 @@ class ParquetPersister:
                 items = self._queue.swap_if_ready()
                 
                 if items:
-                    # Spawn a write thread (non-blocking)
-                    write_thread = threading.Thread(
-                        target=self._write_parquet,
-                        args=(items,),
-                        name=f"ParquetPersister-Write-{self._files_written + 1}",
-                        daemon=True
-                    )
-                    write_thread.start()
+                    # Send to dedicated writer thread via write queue
+                    self._write_queue.put(items)
     
+    def _writer_loop(self) -> None:
+        """Dedicated writer thread that processes write requests from write queue."""
+        while True:
+            try:
+                # Block waiting for items to write
+                items = self._write_queue.get(timeout=1.0)
+                
+                if items is None:
+                    # Sentinel received, exit loop
+                    break
+                
+                # Perform the write
+                self._write_parquet(items)
+                self._write_queue.task_done()
+                
+            except Empty:
+                # Timeout, check if we should stop
+                if self._stop_event.is_set() and self._write_queue.empty():
+                    break
+                continue
+            except Exception as e:
+                print(f"[ParquetPersister-{self._data_type.value}] Writer error: {e}")
+                continue
+
+    def _write_parquet(self, items: List[Dict[str, Any]]) -> None:
+        """
+        Dispatch to the appropriate write method based on data_type.
+        
+        Args:
+            items: List of dictionaries to write
+        """
+        if self._data_type == DataType.TRADE:
+            self._write_trade_parquet(items)
+        elif self._data_type == DataType.MARKET:
+            self._write_market_parquet(items)
+        elif self._data_type == DataType.MARKET_TOKEN:
+            self._write_market_token_parquet(items)
+        else:
+            raise ValueError(f"Unknown data type: {self._data_type}")
+
     def _write_trade_parquet(self, items: List[Dict[str, Any]]) -> None:
         """
         Write a batch of items to a parquet file.
@@ -223,10 +290,10 @@ class ParquetPersister:
                 self._total_records_written += len(items)
                 file_num = self._files_written
             
-            print(f"[ParquetPersister] Written {len(items)} records to {filepath.name} (file #{file_num})")
+            print(f"[ParquetPersister-trade] Written {len(items)} records to {filepath.name} (file #{file_num})")
         
         except Exception as e:
-            print(f"[ParquetPersister] Error writing parquet: {e}")
+            print(f"[ParquetPersister-trade] Error writing parquet: {e}")
             # TODO: Consider retry logic or dead-letter queue
             raise
     def _write_market_token_parquet(self, items: List[Dict[str, Any]]) -> None:
@@ -276,10 +343,10 @@ class ParquetPersister:
                 self._total_records_written += len(items)
                 file_num = self._files_written
             
-            print(f"[ParquetPersister] Written {len(items)} records to {filepath.name} (file #{file_num})")
+            print(f"[ParquetPersister-market_token] Written {len(items)} records to {filepath.name} (file #{file_num})")
         
         except Exception as e:
-            print(f"[ParquetPersister] Error writing parquet: {e}")
+            print(f"[ParquetPersister-market_token] Error writing parquet: {e}")
     def _write_market_parquet(self, items: List[Dict[str, Any]]) -> None:
         """
         Write a batch of items to a parquet file.
@@ -327,10 +394,10 @@ class ParquetPersister:
                 self._total_records_written += len(items)
                 file_num = self._files_written
             
-            print(f"[ParquetPersister] Written {len(items)} records to {filepath.name} (file #{file_num})")
+            print(f"[ParquetPersister-market] Written {len(items)} records to {filepath.name} (file #{file_num})")
         
         except Exception as e:
-            print(f"[ParquetPersister] Error writing parquet: {e}")
+            print(f"[ParquetPersister-market] Error writing parquet: {e}")
     @property
     def stats(self) -> Dict[str, int]:
         """Return current write statistics."""
@@ -343,8 +410,56 @@ class ParquetPersister:
 
 
 # =============================================================================
-# Convenience function for integration
+# Convenience functions for integration
 # =============================================================================
+
+def create_persisted_queue(
+    threshold: int = 10000,
+    output_dir: str = "data",
+    data_type: DataType = DataType.TRADE,
+    auto_start: bool = True
+) -> tuple[SwappableQueue, ParquetPersister]:
+    """
+    Create a queue with attached parquet persister for any data type.
+    
+    Args:
+        threshold: Number of items that triggers a write
+        output_dir: Directory for parquet files
+        data_type: Type of data (DataType.TRADE, DataType.MARKET, DataType.MARKET_TOKEN)
+        auto_start: Start the persister immediately
+    
+    Returns:
+        Tuple of (queue, persister)
+    
+    Example:
+        # For trades
+        queue, persister = create_persisted_queue(
+            threshold=10000,
+            output_dir="data/trades",
+            data_type=DataType.TRADE
+        )
+        
+        # For markets
+        queue, persister = create_persisted_queue(
+            threshold=1000,
+            output_dir="data/markets",
+            data_type=DataType.MARKET
+        )
+        
+        # Workers add items
+        queue.put(item)
+        
+        # When done
+        persister.stop()
+    """
+    queue = SwappableQueue(threshold=threshold)
+    persister = ParquetPersister(queue, output_dir=output_dir, data_type=data_type)
+    
+    if auto_start:
+        persister.start()
+    
+    return queue, persister
+
 
 def create_trade_persisted_queue(
     threshold: int = 10000,
@@ -352,7 +467,8 @@ def create_trade_persisted_queue(
     auto_start: bool = True
 ) -> tuple[SwappableQueue, ParquetPersister]:
     """
-    Create a queue with attached parquet persister.
+    Create a queue with attached parquet persister for trade data.
+    Convenience wrapper around create_persisted_queue.
     
     Args:
         threshold: Number of items that triggers a write
@@ -361,21 +477,60 @@ def create_trade_persisted_queue(
     
     Returns:
         Tuple of (queue, persister)
-    
-    Example:
-        queue, persister = create_persisted_queue(threshold=10000)
-        
-        # Workers add trades
-        for trade in trades:
-            queue.put(trade)
-        
-        # When done
-        persister.stop()
     """
-    queue = SwappableQueue(threshold=threshold)
-    persister = ParquetPersister(queue, output_dir=output_dir)
+    return create_persisted_queue(
+        threshold=threshold,
+        output_dir=output_dir,
+        data_type=DataType.TRADE,
+        auto_start=auto_start
+    )
+
+
+def create_market_persisted_queue(
+    threshold: int = 1000,
+    output_dir: str = "data/markets",
+    auto_start: bool = True
+) -> tuple[SwappableQueue, ParquetPersister]:
+    """
+    Create a queue with attached parquet persister for market data.
+    Convenience wrapper around create_persisted_queue.
     
-    if auto_start:
-        persister.start()
+    Args:
+        threshold: Number of items that triggers a write
+        output_dir: Directory for parquet files
+        auto_start: Start the persister immediately
     
-    return queue, persister
+    Returns:
+        Tuple of (queue, persister)
+    """
+    return create_persisted_queue(
+        threshold=threshold,
+        output_dir=output_dir,
+        data_type=DataType.MARKET,
+        auto_start=auto_start
+    )
+
+
+def create_market_token_persisted_queue(
+    threshold: int = 5000,
+    output_dir: str = "data/market_tokens",
+    auto_start: bool = True
+) -> tuple[SwappableQueue, ParquetPersister]:
+    """
+    Create a queue with attached parquet persister for market token data.
+    Convenience wrapper around create_persisted_queue.
+    
+    Args:
+        threshold: Number of items that triggers a write
+        output_dir: Directory for parquet files
+        auto_start: Start the persister immediately
+    
+    Returns:
+        Tuple of (queue, persister)
+    """
+    return create_persisted_queue(
+        threshold=threshold,
+        output_dir=output_dir,
+        data_type=DataType.MARKET_TOKEN,
+        auto_start=auto_start
+    )

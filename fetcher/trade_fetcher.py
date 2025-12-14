@@ -11,7 +11,7 @@ import threading
 import time
 
 from swappable_queue import SwappableQueue
-from parquet_persister import ParquetPersister, create_persisted_queue
+from parquet_persister import ParquetPersister, create_trade_persisted_queue
 from worker_manager import WorkerManager, get_worker_manager
 
 
@@ -319,8 +319,8 @@ class TradeFetcher:
         Returns:
             Queue containing all fetched trades from all markets
         """
-        # Create persisted queue
-        trade_queue, persister = create_persisted_queue(
+        # Create persisted queue for trades
+        trade_queue, persister = create_trade_persisted_queue(
             threshold=batch_threshold,
             output_dir="data/trades",
             auto_start=True

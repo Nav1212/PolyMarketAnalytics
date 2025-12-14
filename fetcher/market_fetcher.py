@@ -12,7 +12,7 @@ import threading
 import time
 from py_clob_client.client import ClobClient
 from swappable_queue import SwappableQueue
-from parquet_persister import ParquetPersister, create_persisted_queue
+from parquet_persister import ParquetPersister, create_market_persisted_queue
 from worker_manager import WorkerManager, get_worker_manager
 
 
@@ -80,6 +80,55 @@ class MarketFetcher:
             page += 1
         
         return markets
+
+    def fetch_all_markets_to_parquet(
+        self,
+        output_dir: str = "data/markets",
+        batch_threshold: int = 1000
+    ) -> SwappableQueue:
+        """
+        Fetch all markets from Polymarket API and persist to parquet files.
+        
+        Args:
+            output_dir: Directory for parquet files
+            batch_threshold: Number of items that triggers a parquet write
+        
+        Returns:
+            SwappableQueue containing fetched markets
+        """
+        # Create persisted queue for markets
+        market_queue, persister = create_market_persisted_queue(
+            threshold=batch_threshold,
+            output_dir=output_dir,
+            auto_start=True
+        )
+        
+        cursor = 0
+        total_markets = 0
+        
+        while True:
+            loop_start = time.time()
+            # Rate limiting via worker manager
+            self._manager.acquire_market(loop_start)
+            
+            response = self.client.get_markets(next_cursor=self.int_to_base64_urlsafe(cursor))
+            data = response
+            cursor += 1
+            batch = data.get("data", [])
+            
+            if not batch:
+                break  # No more markets
+            
+            # Add to persisted queue
+            market_queue.put_many(batch)
+            total_markets += len(batch)
+            print(f"Fetched {len(batch)} markets (total: {total_markets})")
+        
+        # Stop persister and flush remaining
+        persister.stop()
+        
+        print(f"Total markets fetched and persisted: {total_markets}")
+        return market_queue
 
 ##testing implementation
 def main():
