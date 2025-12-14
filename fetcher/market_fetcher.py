@@ -5,7 +5,7 @@ Fetches markets, all markets
 
 import base64
 import httpx
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, Optional
 from datetime import datetime
 from queue import Queue, Empty
 import threading
@@ -14,6 +14,7 @@ from py_clob_client.client import ClobClient
 from swappable_queue import SwappableQueue
 from parquet_persister import ParquetPersister, create_market_persisted_queue
 from worker_manager import WorkerManager, get_worker_manager
+from config import get_config, Config
 
 
 class MarketFetcher:
@@ -22,19 +23,32 @@ class MarketFetcher:
     """
     CLOB_API_BASE = "https://data-api.polymarket.com"
     
-    def __init__(self, timeout: float = 30.0, worker_manager: WorkerManager = None):
+    def __init__(
+        self,
+        timeout: float = 30.0,
+        worker_manager: WorkerManager = None,
+        config: Config = None,
+        trade_market_queue: Queue = None,
+        price_token_queue: Queue = None
+    ):
         """
         Initialize the market fetcher.
         
         Args:
             timeout: Request timeout in seconds
             worker_manager: WorkerManager instance for rate limiting (uses default if None)
+            config: Config object (uses global config if None)
+            trade_market_queue: Queue to write market condition IDs for trade fetcher
+            price_token_queue: Queue to write token IDs for price fetcher
         """
+        self._config = config or get_config()
         self.client = ClobClient(
             host="https://clob.polymarket.com",
             chain_id=137
         )
         self._manager = worker_manager or get_worker_manager()
+        self._trade_market_queue = trade_market_queue
+        self._price_token_queue = price_token_queue
     
 
     def close(self):
@@ -45,6 +59,29 @@ class MarketFetcher:
     
     def __exit__(self, *args):
         self.close()
+    
+    def _enqueue_markets_for_fetchers(self, markets: List[Dict[str, Any]]) -> None:
+        """
+        Write market condition IDs and token IDs to the trade and price queues.
+        
+        Args:
+            markets: List of market dictionaries from API
+        """
+        for market in markets:
+            condition_id = market.get("condition_id")
+            
+            # Write to trade fetcher queue
+            if self._trade_market_queue is not None and condition_id:
+                self._trade_market_queue.put(condition_id)
+            
+            # Write token IDs to price fetcher queue
+            if self._price_token_queue is not None:
+                tokens = market.get("tokens", [])
+                for token in tokens:
+                    token_id = token.get("token_id")
+                    if token_id:
+                        self._price_token_queue.put(token_id)
+    
     def int_to_base64_urlsafe(n: int) -> str:
         if n < 0:
             raise ValueError("Only non-negative integers are supported")
@@ -74,6 +111,9 @@ class MarketFetcher:
             batch = data.get("data", [])
             if not batch:
                 break  # No more markets
+            
+            # Enqueue for trade and price fetchers
+            self._enqueue_markets_for_fetchers(batch)
             
             markets.extend(batch)
             print(f"Fetched {len(batch)} markets (total: {len(markets)})")
@@ -118,6 +158,9 @@ class MarketFetcher:
             
             if not batch:
                 break  # No more markets
+            
+            # Enqueue for trade and price fetchers
+            self._enqueue_markets_for_fetchers(batch)
             
             # Add to persisted queue
             market_queue.put_many(batch)
