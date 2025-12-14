@@ -28,6 +28,7 @@ conn.execute("""
         question        TEXT NOT NULL,
         active          BOOLEAN DEFAULT TRUE,
         end_date_iso    TIMESTAMP,
+        Outcome       string,
         start_date_iso  TIMESTAMP,
         VolumeNum       TEXT,  
         created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP

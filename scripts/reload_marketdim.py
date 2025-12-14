@@ -59,7 +59,7 @@ try:
     max_id = conn.execute("SELECT COALESCE(MAX(market_id), 0) FROM MarketDim").fetchone()[0]
     
     conn.execute("""
-        INSERT INTO MarketDim (market_id, external_id, event_id, question, active, start_date_iso, end_date_iso, VolumeNum)
+        INSERT INTO MarketDim (market_id, external_id, event_id, question, active, start_date_iso, end_date_iso, VolumeNum, Outcome)
         SELECT 
             ? + ROW_NUMBER() OVER (ORDER BY s.condition_id) as market_id,
             s.condition_id as external_id,
@@ -80,7 +80,8 @@ try:
             TRY_CAST(
                 json_extract_string(s.raw_json, '$.endDate') AS TIMESTAMP
             ) as end_date_iso,
-            json_extract_string(s.raw_json, '$.volume') as VolumeNum
+            json_extract_string(s.raw_json, '$.volume') as VolumeNum,
+            JSON_EXTRACT_string(s.raw_json, '$.outcomes') as Outcome
         FROM stg_markets_raw s
         LEFT JOIN EventDim e ON e.slug = COALESCE(
             json_extract_string(s.raw_json, '$.event.slug'),
