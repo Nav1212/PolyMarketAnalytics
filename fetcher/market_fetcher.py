@@ -83,7 +83,13 @@ class MarketFetcher:
 
 ##testing implementation
 def main():
-    with MarketFetcher() as fetcher:
+    # Create centralized worker manager
+    worker_manager = WorkerManager(trade_rate=70, market_rate=100)
+    
+    with MarketFetcher(worker_manager=worker_manager) as fetcher:
         markets = fetcher.fetch_all_markets()
         print(f"Total markets fetched: {len(markets)}")
         # Here you can process or store the markets as needed
+    
+    # Print rate limit timing statistics
+    worker_manager.print_statistics()

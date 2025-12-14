@@ -5,6 +5,7 @@ Main entry point for the Polymarket Trade Fetcher
 from datetime import datetime
 from queue import Queue
 from trade_fetcher import TradeFetcher
+from worker_manager import WorkerManager
 from concurrent.futures import ThreadPoolExecutor
 import duckdb
 from pathlib import Path
@@ -72,7 +73,7 @@ def fetch_trades(market_id: str, start_time: int, end_time: int):
         return trade_queue
 
 
-def fetch_trades_multimarket(market_ids: list, start_time: int, end_time: int, num_workers: int = 5):
+def fetch_trades_multimarket(market_ids: list, start_time: int, end_time: int, num_workers: int = 5, worker_manager: WorkerManager = None):
     """
     Fetch trades for multiple markets using worker threads.
     
@@ -81,6 +82,7 @@ def fetch_trades_multimarket(market_ids: list, start_time: int, end_time: int, n
         start_time: Start timestamp in Unix seconds
         end_time: End timestamp in Unix seconds
         num_workers: Number of worker threads (default 5)
+        worker_manager: WorkerManager instance for rate limiting
     
     Returns:
         Queue containing all fetched trades from all markets
@@ -96,7 +98,7 @@ def fetch_trades_multimarket(market_ids: list, start_time: int, end_time: int, n
     print("=" * 60)
     
     # Fetch trades using multiple workers
-    with TradeFetcher() as fetcher:
+    with TradeFetcher(worker_manager=worker_manager) as fetcher:
         trade_queue = fetcher.fetch_trades_multithreaded_testing(
             market_queue=market_queue,
             start_time=start_time,
@@ -111,9 +113,11 @@ def main():
     """
     Main function to demonstrate multi-market trade fetching
     """
-
-        # Set time range
-        #i use a time range that covers all of polymarket history
+    # Create centralized worker manager
+    worker_manager = WorkerManager(trade_rate=70, market_rate=100)
+    
+    # Set time range
+    # i use a time range that covers all of polymarket history
     end_time = datetime.now()
     start_time = datetime(2000, 1, 1)
     # Query active market IDs from DuckDB silver layer limiting to 5 for testing 
@@ -146,7 +150,8 @@ def main():
         market_ids=market_ids,
         start_time=start_ts,
         end_time=end_ts,
-        num_workers=5
+        num_workers=5,
+        worker_manager=worker_manager
     )
     
     # Display sample trades if available
@@ -163,6 +168,9 @@ def main():
                 print(f"  {key}: {value}")
     else:
         print("\nNo trades found for the specified time range.")
+    
+    # Print rate limit timing statistics
+    worker_manager.print_statistics()
 
 
 if __name__ == "__main__":
