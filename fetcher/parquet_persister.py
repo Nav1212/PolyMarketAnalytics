@@ -43,6 +43,25 @@ TRADE_SCHEMA = pa.schema([
     # -------------------------------------------------------------------------
 ])
 
+MARKET_SCHEMA = pa.schema([
+    ('condition_Id', pa.string()),
+    ('end_date_iso', pa.string()),   
+    ('game_start_time', pa.string()),
+    ('description', pa.string()),
+    ('maker_base_fee', pa.float64()),
+    ('fpmm', pa.string()),
+    ('question', pa.string()),
+    ('closed', pa.bool_()),
+    ('active', pa.bool_())
+])
+
+MARKET_TOKEN_SCHEMA = pa.schema([
+    ('condition_Id', pa.string()),
+    ('price', pa.float64()),
+    ('token_id', pa.string()),
+    ('winner', pa.bool())
+])
+
 
 class ParquetPersister:
     """
@@ -157,7 +176,7 @@ class ParquetPersister:
                     )
                     write_thread.start()
     
-    def _write_parquet(self, items: List[Dict[str, Any]]) -> None:
+    def _write_trade_parquet(self, items: List[Dict[str, Any]]) -> None:
         """
         Write a batch of items to a parquet file.
         
@@ -210,7 +229,108 @@ class ParquetPersister:
             print(f"[ParquetPersister] Error writing parquet: {e}")
             # TODO: Consider retry logic or dead-letter queue
             raise
-    
+    def _write_market_token_parquet(self, items: List[Dict[str, Any]]) -> None:
+        """
+        Write a batch of items to a parquet file.
+        
+        Args:
+            items: List of market token dictionaries to write
+        """
+        if not items:
+            return
+        
+        try:
+            timestamp = datetime.now()
+            
+            # Build output path
+            if self._use_hive_partitioning:
+                date_partition = timestamp.strftime("dt=%Y-%m-%d")
+                partition_dir = self._output_dir / date_partition
+                partition_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                partition_dir = self._output_dir
+            
+            filename = f"market_tokens_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.parquet"
+            filepath = partition_dir / filename
+            
+            # Convert to PyArrow table
+            # If schema is defined, use it; otherwise infer from data
+            if len(MARKET_TOKEN_SCHEMA) > 0:
+                table = pa.Table.from_pylist(items, schema=MARKET_TOKEN_SCHEMA)
+            else:
+                # Infer schema from data (fallback)
+                table = pa.Table.from_pylist(items)
+            
+            # Write parquet file
+            pq.write_table(
+                table,
+                filepath,
+                compression='snappy',
+                use_dictionary=True,
+                write_statistics=True
+            )
+            
+            # Update stats
+            with self._lock:
+                self._files_written += 1
+                self._total_records_written += len(items)
+                file_num = self._files_written
+            
+            print(f"[ParquetPersister] Written {len(items)} records to {filepath.name} (file #{file_num})")
+        
+        except Exception as e:
+            print(f"[ParquetPersister] Error writing parquet: {e}")
+    def _write_market_parquet(self, items: List[Dict[str, Any]]) -> None:
+        """
+        Write a batch of items to a parquet file.
+        
+        Args:
+            items: List of market dictionaries to write
+        """
+        if not items:
+            return
+        
+        try:
+            timestamp = datetime.now()
+            
+            # Build output path
+            if self._use_hive_partitioning:
+                date_partition = timestamp.strftime("dt=%Y-%m-%d")
+                partition_dir = self._output_dir / date_partition
+                partition_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                partition_dir = self._output_dir
+            
+            filename = f"markets_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.parquet"
+            filepath = partition_dir / filename
+            
+            # Convert to PyArrow table
+            # If schema is defined, use it; otherwise infer from data
+            if len(MARKET_SCHEMA) > 0:
+                table = pa.Table.from_pylist(items, schema=MARKET_SCHEMA)
+            else:
+                # Infer schema from data (fallback)
+                table = pa.Table.from_pylist(items)
+            
+            # Write parquet file
+            pq.write_table(
+                table,
+                filepath,
+                compression='snappy',
+                use_dictionary=True,
+                write_statistics=True
+            )
+            
+            # Update stats
+            with self._lock:
+                self._files_written += 1
+                self._total_records_written += len(items)
+                file_num = self._files_written
+            
+            print(f"[ParquetPersister] Written {len(items)} records to {filepath.name} (file #{file_num})")
+        
+        except Exception as e:
+            print(f"[ParquetPersister] Error writing parquet: {e}")
     @property
     def stats(self) -> Dict[str, int]:
         """Return current write statistics."""
@@ -226,7 +346,7 @@ class ParquetPersister:
 # Convenience function for integration
 # =============================================================================
 
-def create_persisted_queue(
+def create_trade_persisted_queue(
     threshold: int = 10000,
     output_dir: str = "data/trades",
     auto_start: bool = True
