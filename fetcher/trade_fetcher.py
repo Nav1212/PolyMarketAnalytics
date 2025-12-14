@@ -12,44 +12,22 @@ import time
 
 from swappable_queue import SwappableQueue
 from parquet_persister import ParquetPersister, create_persisted_queue
+from worker_manager import WorkerManager, get_worker_manager
+
+
 class TradeFetcher:
     """
     Simple class to fetch trades from Polymarket Data API
     """
-    RATE = 70  # requests per 10 second
-    tokens = RATE
-    last_refill = time.time()
-    lock = threading.Lock()
-
-
-    @classmethod
-    def acquire_token(cls):
-        while True:
-            with cls.lock:
-                now = time.time()
-                elapsed = now - cls.last_refill
-
-                # Refill tokens every second
-                if elapsed >= 10.0:
-                    cls.tokens = cls.RATE
-                    cls.last_refill = now
-
-                # If token available → consume and proceed
-                if cls.tokens > 0:
-                    cls.tokens -= 1
-                    return  # you now have permission
-            
-            # No token available → sleep very briefly and try again
-            time.sleep(0.01)
-
     DATA_API_BASE = "https://data-api.polymarket.com"
     
-    def __init__(self, timeout: float = 30.0):
+    def __init__(self, timeout: float = 30.0, worker_manager: WorkerManager = None):
         """
         Initialize the trade fetcher.
         
         Args:
             timeout: Request timeout in seconds
+            worker_manager: WorkerManager instance for rate limiting (uses default if None)
         """
         self.client = httpx.Client(
             timeout=httpx.Timeout(timeout, connect=10.0),
@@ -58,6 +36,7 @@ class TradeFetcher:
                 "Accept": "application/json"
             }
         )
+        self._manager = worker_manager or get_worker_manager()
     
     def close(self):
         """Close HTTP client"""
@@ -95,7 +74,8 @@ class TradeFetcher:
                 "limit": 50,
                 "offset": offset
             }
-            self.acquire_token()
+            loop_start = time.time()
+            self._manager.acquire_trade(loop_start)
             try:
                 response = self.client.get(
                     f"{TradeFetcher.DATA_API_BASE}/v1/leaderboard",
@@ -170,7 +150,8 @@ class TradeFetcher:
         filteramount: int =0,
         offset: int =0,
         limit: int = 500,
-        user_id: str =""
+        user_id: str ="",
+        loop_start: float = None
     ) -> List[Dict[str, Any]]:
         """
         Fetch trades for a specific market within a time range.
@@ -180,6 +161,7 @@ class TradeFetcher:
             start_time: Start timestamp in Unix seconds
             end_time: End timestamp in Unix seconds
             limit: Maximum number of trades per request (max 500)
+            loop_start: Timestamp for rate limit timing tracking
         
         Returns:
             List of trade dictionaries
@@ -194,6 +176,9 @@ class TradeFetcher:
             ... )
             >>> print(f"Fetched {len(trades)} trades")
         """
+        if loop_start is None:
+            loop_start = time.time()
+        
         params = {
             "market": market,
             "limit": limit,
@@ -203,7 +188,7 @@ class TradeFetcher:
         }
         
         # Acquire rate limit token before making request
-        self.acquire_token()
+        self._manager.acquire_trade(loop_start)
         
         try:
             response = self.client.get(
@@ -263,12 +248,14 @@ class TradeFetcher:
                 offset =0 
                 filteramount = 0 
                 while True:
+                    loop_start = time.time()
                     trades = self.fetch_trades(
                         market=market,
                         limit=500,
                         offset=offset,
                         filtertype ="CASH",
-                        filteramount=filteramount
+                        filteramount=filteramount,
+                        loop_start=loop_start
                     )
                     
                     if not trades:

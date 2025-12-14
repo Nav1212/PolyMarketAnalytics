@@ -13,43 +13,28 @@ import time
 from py_clob_client.client import ClobClient
 from swappable_queue import SwappableQueue
 from parquet_persister import ParquetPersister, create_persisted_queue
+from worker_manager import WorkerManager, get_worker_manager
+
+
 class MarketFetcher:
     """
-    Keeping this hear in case the rate limit matters endpoint documentation unclear
+    Simple Market Fetcher for Polymarket
     """
-    RATE = 100  # requests per 10 second
-    tokens = RATE
-    last_refill = time.time()
-    lock = threading.Lock()
-
-    @classmethod
-    def acquire_token(cls):
-        with cls.lock:
-            current_time = time.time()
-            elapsed = current_time - cls.last_refill
-            if elapsed >= 10:
-                # Refill tokens
-                cls.tokens = cls.RATE
-                cls.last_refill = current_time
-
-            if cls.tokens > 0:
-                cls.tokens -= 1
-                return True
-            else:
-                return False
     CLOB_API_BASE = "https://data-api.polymarket.com"
     
-    def __init__(self, timeout: float = 30.0):
+    def __init__(self, timeout: float = 30.0, worker_manager: WorkerManager = None):
         """
-        Initialize the trade fetcher.
+        Initialize the market fetcher.
         
         Args:
             timeout: Request timeout in seconds
+            worker_manager: WorkerManager instance for rate limiting (uses default if None)
         """
         self.client = ClobClient(
-        host="https://clob.polymarket.com",
-        chain_id=137
+            host="https://clob.polymarket.com",
+            chain_id=137
         )
+        self._manager = worker_manager or get_worker_manager()
     
 
     def close(self):
@@ -79,16 +64,14 @@ class MarketFetcher:
         page = 1
         cursor = 0
         while True:
-            # Rate limiting
-            while not self.acquire_token():
-                time.sleep(0.1)  # Wait for token
+            loop_start = time.time()
+            # Rate limiting via worker manager
+            self._manager.acquire_market(loop_start)
             
             response = self.client.get_markets(next_cursor=self.int_to_base64_urlsafe(cursor))
-            )
-            response.raise_for_status()
-            data = response.json()
-            cursor+= 1
-            batch = data.get("markets", [])
+            data = response
+            cursor += 1
+            batch = data.get("data", [])
             if not batch:
                 break  # No more markets
             
