@@ -19,7 +19,10 @@ import duckdb
 
 from swappable_queue import SwappableQueue
 from enum import Enum
+from utils.logging_config import get_logger
+from utils.exceptions import ParquetWriteError, CursorError
 
+logger = get_logger("parquet_persister")
 
 class DataType(Enum):
     """Supported data types for parquet persistence."""
@@ -102,10 +105,10 @@ def load_cursor(output_dir: str, cursor_filename: str = "cursor.json") -> Option
         try:
             with open(cursor_path, 'r') as f:
                 cursor = json.load(f)
-            print(f"[Cursor] Loaded cursor from {cursor_path}")
+            logger.info(f"Loaded cursor from {cursor_path}")
             return cursor
         except Exception as e:
-            print(f"[Cursor] Error loading cursor from {cursor_path}: {e}")
+            logger.error(f"Error loading cursor from {cursor_path}: {e}")
             return None
     return None
 
@@ -133,9 +136,10 @@ def save_cursor(
     try:
         with open(cursor_path, 'w') as f:
             json.dump(cursor_data, f, indent=2)
-        print(f"[Cursor] Saved cursor to {cursor_path}")
+        logger.info(f"Saved cursor to {cursor_path}")
     except Exception as e:
-        print(f"[Cursor] Error saving cursor to {cursor_path}: {e}")
+        logger.error(f"Error saving cursor to {cursor_path}: {e}")
+        raise CursorError(f"Failed to save cursor: {e}", cursor_path=str(cursor_path))
 
 
 # =============================================================================
@@ -159,7 +163,7 @@ def load_market_parquet(
     path = Path(parquet_path)
     
     if not path.exists():
-        print(f"[Parquet] Path not found: {parquet_path}")
+        logger.warning(f"Path not found: {parquet_path}")
         return []
     
     try:
@@ -185,11 +189,11 @@ def load_market_parquet(
         conn.close()
         
         market_ids = [row[0] for row in result]
-        print(f"[Parquet] Loaded {len(market_ids)} market IDs from {parquet_path}")
+        logger.info(f"Loaded {len(market_ids)} market IDs from {parquet_path}")
         return market_ids
         
     except Exception as e:
-        print(f"[Parquet] Error loading markets from {parquet_path}: {e}")
+        logger.error(f"Error loading markets from {parquet_path}: {e}")
         return []
 
 
@@ -212,7 +216,7 @@ def load_parquet_data(
     path = Path(parquet_path)
     
     if not path.exists():
-        print(f"[Parquet] Path not found: {parquet_path}")
+        logger.warning(f"Path not found: {parquet_path}")
         return []
     
     try:
@@ -242,7 +246,7 @@ def load_parquet_data(
         return result.to_dict('records')
         
     except Exception as e:
-        print(f"[Parquet] Error loading data from {parquet_path}: {e}")
+        logger.error(f"Error loading data from {parquet_path}: {e}")
         return []
 
 
@@ -326,7 +330,10 @@ class ParquetPersister:
             daemon=True
         )
         self._monitor_thread.start()
-        print(f"[ParquetPersister-{self._data_type.value}] Started monitoring queue (threshold={self._queue._threshold})")
+        logger.info(
+            f"Started monitoring queue for {self._data_type.value}",
+            extra={"data_type": self._data_type.value, "threshold": self._queue._threshold}
+        )
     
     def stop(self, timeout: float = 30.0) -> None:
         """
@@ -335,7 +342,7 @@ class ParquetPersister:
         Args:
             timeout: Maximum seconds to wait for threads to finish
         """
-        print(f"[ParquetPersister-{self._data_type.value}] Stopping...")
+        logger.info(f"Stopping ParquetPersister for {self._data_type.value}...")
         
         # Signal shutdown
         self._stop_event.set()
@@ -348,7 +355,10 @@ class ParquetPersister:
         # Flush any remaining items from data queue to write queue
         remaining = self._queue.drain()
         if remaining:
-            print(f"[ParquetPersister-{self._data_type.value}] Flushing {len(remaining)} remaining items...")
+            logger.info(
+                f"Flushing {len(remaining)} remaining items for {self._data_type.value}",
+                extra={"remaining_count": len(remaining)}
+            )
             self._write_queue.put(remaining)
         
         # Send sentinel to stop writer thread
@@ -358,7 +368,13 @@ class ParquetPersister:
         if self._writer_thread is not None:
             self._writer_thread.join(timeout=timeout)
         
-        print(f"[ParquetPersister-{self._data_type.value}] Stopped. Total files: {self._files_written}, Total records: {self._total_records_written}")
+        logger.info(
+            f"Stopped ParquetPersister for {self._data_type.value}",
+            extra={
+                "files_written": self._files_written,
+                "total_records": self._total_records_written
+            }
+        )
     
     def _monitor_loop(self) -> None:
         """Main loop that monitors data queue and sends batches to writer."""
@@ -398,7 +414,10 @@ class ParquetPersister:
                     break
                 continue
             except Exception as e:
-                print(f"[ParquetPersister-{self._data_type.value}] Writer error: {e}")
+                logger.exception(
+                    f"Writer error for {self._data_type.value}: {e}",
+                    extra={"data_type": self._data_type.value}
+                )
                 continue
 
     def _write_parquet(self, items: List[Dict[str, Any]]) -> None:
@@ -466,12 +485,18 @@ class ParquetPersister:
                 self._total_records_written += len(items)
                 file_num = self._files_written
             
-            print(f"[ParquetPersister-trade] Written {len(items)} records to {filepath.name} (file #{file_num})")
+            logger.info(
+                f"Written {len(items)} trade records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
         
         except Exception as e:
-            print(f"[ParquetPersister-trade] Error writing parquet: {e}")
-            # TODO: Consider retry logic or dead-letter queue
-            raise
+            logger.exception(
+                f"Error writing trade parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
+            # Consider retry logic or dead-letter queue
+            raise ParquetWriteError(f"Failed to write trades: {e}", file_path=str(filepath) if 'filepath' in locals() else None)
     def _write_market_token_parquet(self, items: List[Dict[str, Any]]) -> None:
         """
         Write a batch of items to a parquet file.
@@ -519,10 +544,16 @@ class ParquetPersister:
                 self._total_records_written += len(items)
                 file_num = self._files_written
             
-            print(f"[ParquetPersister-market_token] Written {len(items)} records to {filepath.name} (file #{file_num})")
+            logger.info(
+                f"Written {len(items)} market_token records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
         
         except Exception as e:
-            print(f"[ParquetPersister-market_token] Error writing parquet: {e}")
+            logger.exception(
+                f"Error writing market_token parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
     def _write_market_parquet(self, items: List[Dict[str, Any]]) -> None:
         """
         Write a batch of items to a parquet file.
@@ -570,10 +601,16 @@ class ParquetPersister:
                 self._total_records_written += len(items)
                 file_num = self._files_written
             
-            print(f"[ParquetPersister-market] Written {len(items)} records to {filepath.name} (file #{file_num})")
+            logger.info(
+                f"Written {len(items)} market records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
         
         except Exception as e:
-            print(f"[ParquetPersister-market] Error writing parquet: {e}")
+            logger.exception(
+                f"Error writing market parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
 
     def _write_price_parquet(self, items: List[Dict[str, Any]]) -> None:
         """
@@ -620,10 +657,16 @@ class ParquetPersister:
                 self._total_records_written += len(items)
                 file_num = self._files_written
             
-            print(f"[ParquetPersister-price] Written {len(items)} records to {filepath.name} (file #{file_num})")
+            logger.info(
+                f"Written {len(items)} price records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
         
         except Exception as e:
-            print(f"[ParquetPersister-price] Error writing parquet: {e}")
+            logger.exception(
+                f"Error writing price parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
 
     @property
     def stats(self) -> Dict[str, int]:

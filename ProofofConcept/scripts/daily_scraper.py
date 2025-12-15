@@ -58,8 +58,11 @@ def scrape_daily_prices(conn: duckdb.DuckDBPyConnection,
             WHERE f.snapshot_ts >= ? AND f.snapshot_ts <= ?
         """, [start_dt, end_dt]).fetchall())
         existing_tokens |= gold_tokens
-    except:
+    except duckdb.CatalogException:
+        # Gold layer tables may not exist yet
         pass
+    except Exception as e:
+        print(f"Warning: Error checking gold layer: {e}")
     
     print(f"  Found {len(existing_tokens)} tokens already have data for this date")
     

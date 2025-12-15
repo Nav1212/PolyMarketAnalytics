@@ -11,6 +11,16 @@ import threading
 import time
 
 from swappable_queue import SwappableQueue
+from utils.logging_config import get_logger
+from utils.exceptions import (
+    PolymarketAPIError,
+    RateLimitExceededError,
+    NetworkTimeoutError,
+)
+from utils.retry import retry
+
+logger = get_logger("trade_fetcher")
+
 from parquet_persister import (
     ParquetPersister 
 )
@@ -120,15 +130,43 @@ class TradeFetcher:
             return response.json()
         
         except httpx.HTTPStatusError as e:
-            print(f"HTTP error fetching trades: {e.response.status_code} - {e.response.text}")
+            if e.response.status_code == 429:
+                logger.warning(
+                    "Rate limit exceeded fetching trades",
+                    extra={"market": market, "status_code": 429}
+                )
+                raise RateLimitExceededError(
+                    endpoint="/trades",
+                    response_body=e.response.text
+                )
+            logger.error(
+                f"HTTP error fetching trades: {e.response.status_code}",
+                extra={"market": market, "status_code": e.response.status_code}
+            )
             return []
         
+        except httpx.TimeoutException as e:
+            logger.error(
+                f"Timeout fetching trades for market {market[:16]}...",
+                extra={"market": market}
+            )
+            raise NetworkTimeoutError(
+                endpoint="/trades",
+                timeout_seconds=self._config.api.timeout
+            )
+        
         except httpx.RequestError as e:
-            print(f"Request error fetching trades: {e}")
+            logger.error(
+                f"Request error fetching trades: {e}",
+                extra={"market": market, "error_type": type(e).__name__}
+            )
             return []
         
         except Exception as e:
-            print(f"Unexpected error fetching trades: {e}")
+            logger.exception(
+                f"Unexpected error fetching trades: {e}",
+                extra={"market": market}
+            )
             return []
     
     def _worker(
@@ -159,7 +197,10 @@ class TradeFetcher:
                         trade_queue.put(None)
                     return
                 
-                print(f"Worker {worker_id}: Processing market {market[:10]}...")
+                logger.info(
+                    f"Worker {worker_id}: Processing market {market[:16]}...",
+                    extra={"worker_id": worker_id, "market": market[:16]}
+                )
                 
                 # Fetch all trades for this market
                 trade_count = 0
@@ -201,16 +242,25 @@ class TradeFetcher:
                         offset =0
                     offset+=500
 
-                    print(f"Worker {worker_id}: Fetched {trade_count} ")
+                    logger.debug(
+                        f"Worker {worker_id}: Fetched {trade_count} trades so far",
+                        extra={"worker_id": worker_id, "trade_count": trade_count}
+                    )
                     # Move to the next batch (start after the last trade)
-                print(f"Worker {worker_id}: Finished market {market[:10]}, total trades: {trade_count}")                
+                logger.info(
+                    f"Worker {worker_id}: Finished market {market[:16]}, total trades: {trade_count}",
+                    extra={"worker_id": worker_id, "market": market[:16], "trade_count": trade_count}
+                )                
                 self._market_queue.task_done()
             except Empty:
                 # Timeout on get() → loop again, don't exit
                 continue
                
             except Exception as e:
-                print(f"Worker {worker_id}: Error - {e}")
+                logger.exception(
+                    f"Worker {worker_id}: Unhandled error - {e}",
+                    extra={"worker_id": worker_id, "error_type": type(e).__name__}
+                )
                 if market is not None:
                     self._market_queue.task_done()
                 if not is_swappable:
@@ -228,8 +278,8 @@ if __name__ == "__main__":
         start_ts = int(datetime(2024, 12, 1).timestamp())
         end_ts = int(datetime(2024, 12, 30).timestamp())
         
-        print(f"Fetching trades for market {market_id[:10]}...")
-        print(f"Time range: {start_ts} to {end_ts}")
+        logger.info(f"Fetching trades for market {market_id[:16]}...")
+        logger.info(f"Time range: {start_ts} to {end_ts}")
         
         trades = fetcher.fetch_all_trades(
             market=market_id,
@@ -237,10 +287,10 @@ if __name__ == "__main__":
             end_time=end_ts
         )
         
-        print(f"\nFetched {trades.qsize()} total trades")
+        logger.info(f"Fetched {trades.qsize()} total trades")
         
         if trades.qsize() == 500:
-            print(f"\n500th trade:")
+            logger.info("500th trade:")
             # Retrieve the 500th trade (index 499) from the queue without losing data
             trades_list = []
             for _ in range(trades.qsize()):

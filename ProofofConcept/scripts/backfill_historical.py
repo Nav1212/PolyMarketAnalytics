@@ -160,8 +160,10 @@ def backfill_prices(conn: duckdb.DuckDBPyConnection,
             JOIN TokenDim t ON f.token_id = t.token_id
             JOIN MarketDim m ON t.market_id = m.market_id
         """).fetchall())
-    except:
+    except duckdb.CatalogException:
         pass  # Gold tables may not exist yet
+    except Exception as e:
+        print(f"Warning: Error checking gold layer for prices: {e}")
     
     markets_with_prices = markets_with_prices_staging | markets_with_prices_gold
     print(f"  Found {len(markets_with_prices):,} markets already have price data")
