@@ -53,7 +53,6 @@ class LeaderboardFetcher:
         timeout: float = None,
         worker_manager: WorkerManager = None,
         config: Config = None,
-        market_queue: Queue = None,
     ):
         """
         Initialize the leaderboard fetcher.
@@ -65,7 +64,6 @@ class LeaderboardFetcher:
             market_queue: Queue containing market IDs to process
         """
         self._config = config or get_config()
-        self._market_queue = market_queue
         
         if timeout is None:
             timeout = self._config.api.timeout
@@ -220,7 +218,8 @@ class LeaderboardFetcher:
         worker_id: int,
         output_queue: Union[Queue, SwappableQueue],
         category: Union[LeaderboardCategory, str] = LeaderboardCategory.OVERALL,
-        timePeriod: Union[LeaderboardTimePeriod, str] = LeaderboardTimePeriod.DAY
+        timePeriod: Union[LeaderboardTimePeriod, str] = LeaderboardTimePeriod.DAY,
+        OrderBy: Union[LeaderboardOrderBy, str] = LeaderboardOrderBy.PNL
     ):
         """
         Worker thread that fetches leaderboard data from the market queue.
@@ -235,20 +234,12 @@ class LeaderboardFetcher:
         
         while True:
             try:
-                market = self._market_queue.get(timeout=1)
-                if market is None:
-                    self._market_queue.task_done()
-                    if not is_swappable:
-                        output_queue.put(None)
-                    return
-                
-                display_id = market[:16] if len(market) > 16 else market
-                print(f"[Leaderboard Worker {worker_id}] Processing market {display_id}...")
+                print(f"[Leaderboard Worker {worker_id}]")
                 
                 entries = self.fetch_leaderboard_all(
-                    market=market,
                     category=category,
-                    timePeriod=timePeriod
+                    timePeriod=timePeriod, 
+                    OrderBy = OrderBy,
                 )
                 
                 if entries:
@@ -259,19 +250,12 @@ class LeaderboardFetcher:
                             output_queue.put(entry)
                     
                     print(f"[Leaderboard Worker {worker_id}] Fetched {len(entries)} entries for {display_id}")
-                
-                self._market_queue.task_done()
-                
+                                
             except Empty:
                 continue
             
             except Exception as e:
-                print(f"[Leaderboard Worker {worker_id}] Error: {e}")
-                try:
-                    self._market_queue.task_done()
-                except:
-                    pass
-    
+                print(f"[Leaderboard Worker {worker_id}] Error: {e}")    
     def run_workers(
         self,
         output_queue: Union[Queue, SwappableQueue],
