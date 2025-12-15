@@ -92,6 +92,7 @@ class MarketFetcher:
                     if token_id:
                         self._price_token_queue.put(token_id)
     
+    @staticmethod
     def int_to_base64_urlsafe(n: int) -> str:
         if n < 0:
             raise ValueError("Only non-negative integers are supported")
@@ -109,15 +110,15 @@ class MarketFetcher:
         """
         markets = []
         page = 1
-        cursor = 0
+        next_cursor = None
         while True:
             loop_start = time.time()
             # Rate limiting via worker manager
             self._manager.acquire_market(loop_start)
             
-            response = self.client.get_markets(next_cursor=self.int_to_base64_urlsafe(cursor))
+            response = self.client.get_markets(next_cursor=next_cursor) if next_cursor else self.client.get_markets()
             data = response
-            cursor += 1
+            next_cursor = data.get("next_cursor")
             batch = data.get("data", [])
             if not batch:
                 break  # No more markets
@@ -153,7 +154,7 @@ class MarketFetcher:
             auto_start=True
         )
         
-        cursor = 0
+        next_cursor = None
         total_markets = 0
         
         while True:
@@ -161,9 +162,9 @@ class MarketFetcher:
             # Rate limiting via worker manager
             self._manager.acquire_market(loop_start)
             
-            response = self.client.get_markets(next_cursor=self.int_to_base64_urlsafe(cursor))
+            response = self.client.get_markets(next_cursor=next_cursor) if next_cursor else self.client.get_markets()
             data = response
-            cursor += 1
+            next_cursor = data.get("next_cursor")
             batch = data.get("data", [])
             
             if not batch:
@@ -198,7 +199,7 @@ class MarketFetcher:
             stop_event: Optional event to signal stop
         """
         is_swappable = isinstance(output_queue, SwappableQueue)
-        cursor = 0
+        next_cursor = None
         total_markets = 0
         
         print(f"[Market Worker {worker_id}] Starting market fetch...")
@@ -208,8 +209,9 @@ class MarketFetcher:
             self._manager.acquire_market(loop_start)
             
             try:
-                response = self.client.get_markets(next_cursor=self.int_to_base64_urlsafe(cursor))
+                response = self.client.get_markets(next_cursor=next_cursor) if next_cursor else self.client.get_markets()
                 batch = response.get("data", [])
+                next_cursor = response.get("next_cursor")
                 
                 if not batch:
                     break
@@ -226,7 +228,6 @@ class MarketFetcher:
                 
                 total_markets += len(batch)
                 print(f"[Market Worker {worker_id}] Fetched {len(batch)} markets (total: {total_markets})")
-                cursor += 1
                 
             except Exception as e:
                 print(f"[Market Worker {worker_id}] Error: {e}")

@@ -204,7 +204,7 @@ class TradeFetcher:
                     print(f"Worker {worker_id}: Fetched {trade_count} ")
                     # Move to the next batch (start after the last trade)
                 print(f"Worker {worker_id}: Finished market {market[:10]}, total trades: {trade_count}")                
-                market_queue.task_done()
+                self._market_queue.task_done()
             except Empty:
                 # Timeout on get() → loop again, don't exit
                 continue
@@ -212,7 +212,7 @@ class TradeFetcher:
             except Exception as e:
                 print(f"Worker {worker_id}: Error - {e}")
                 if market is not None:
-                    market_queue.task_done()
+                    self._market_queue.task_done()
                 if not is_swappable:
                     trade_queue.put(None)
                 return

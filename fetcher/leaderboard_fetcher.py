@@ -5,6 +5,7 @@ Fetches leaderboard data for markets from the Data API
 
 import httpx
 import threading
+from enum import Enum
 from typing import List, Dict, Any, Generator, Union
 from queue import Queue, Empty
 import time
@@ -12,6 +13,34 @@ import time
 from swappable_queue import SwappableQueue
 from worker_manager import WorkerManager, get_worker_manager
 from config import get_config, Config
+
+
+class LeaderboardCategory(str, Enum):
+    """Market category for the leaderboard."""
+    OVERALL = "OVERALL"
+    POLITICS = "POLITICS"
+    SPORTS = "SPORTS"
+    CRYPTO = "CRYPTO"
+    CULTURE = "CULTURE"
+    MENTIONS = "MENTIONS"
+    WEATHER = "WEATHER"
+    ECONOMICS = "ECONOMICS"
+    TECH = "TECH"
+    FINANCE = "FINANCE"
+
+
+class LeaderboardTimePeriod(str, Enum):
+    """Time period for leaderboard results."""
+    DAY = "DAY"
+    WEEK = "WEEK"
+    MONTH = "MONTH"
+    ALL = "ALL"
+
+
+class LeaderboardOrderBy(str, Enum):
+    """Leaderboard ordering criteria."""
+    PNL = "PNL"
+    VOL = "VOL"
 
 
 class LeaderboardFetcher:
@@ -64,9 +93,9 @@ class LeaderboardFetcher:
     def fetch_leaderboard(
         self,
         market: str,
-        category: str = "all",
-        timePeriod: str = "all",
-        orderBy: str = "VOL",
+        category: Union[LeaderboardCategory, str] = LeaderboardCategory.OVERALL,
+        timePeriod: Union[LeaderboardTimePeriod, str] = LeaderboardTimePeriod.DAY,
+        orderBy: Union[LeaderboardOrderBy, str] = LeaderboardOrderBy.PNL,
         limit: int = 50,
         max_offset: int = 10000,
         loop_start: float = None
@@ -76,9 +105,9 @@ class LeaderboardFetcher:
         
         Args:
             market: Market condition_id (e.g., "0x123abc...")
-            category: Category filter (default "all")
-            timePeriod: Time period filter (default "all")
-            orderBy: Order by field (default "VOL")
+            category: Category filter (default OVERALL)
+            timePeriod: Time period filter (default DAY)
+            orderBy: Order by field (default PNL)
             limit: Number of entries per request (default 50)
             max_offset: Maximum offset to fetch (default 10000)
             loop_start: Timestamp for rate limit timing tracking
@@ -92,14 +121,19 @@ class LeaderboardFetcher:
             ...     data = response.json()
             ...     print(data)
         """
+        # Convert enums to string values
+        category_str = category.value if isinstance(category, LeaderboardCategory) else category
+        time_period_str = timePeriod.value if isinstance(timePeriod, LeaderboardTimePeriod) else timePeriod
+        order_by_str = orderBy.value if isinstance(orderBy, LeaderboardOrderBy) else orderBy
+        
         offset = 0
         
         while offset < max_offset:
             params = {
-                "category": category,
+                "category": category_str,
                 "market": market,
-                "timePeriod": timePeriod,
-                "orderBy": orderBy,
+                "timePeriod": time_period_str,
+                "orderBy": order_by_str,
                 "limit": limit,
                 "offset": offset
             }
@@ -136,9 +170,9 @@ class LeaderboardFetcher:
     def fetch_leaderboard_all(
         self,
         market: str,
-        category: str = "all",
-        timePeriod: str = "all",
-        orderBy: str = "VOL",
+        category: Union[LeaderboardCategory, str] = LeaderboardCategory.OVERALL,
+        timePeriod: Union[LeaderboardTimePeriod, str] = LeaderboardTimePeriod.DAY,
+        orderBy: Union[LeaderboardOrderBy, str] = LeaderboardOrderBy.PNL,
         limit: int = 50,
         max_offset: int = 10000
     ) -> List[Dict[str, Any]]:
@@ -147,9 +181,9 @@ class LeaderboardFetcher:
         
         Args:
             market: Market condition_id (e.g., "0x123abc...")
-            category: Category filter (default "all")
-            timePeriod: Time period filter (default "all")
-            orderBy: Order by field (default "VOL")
+            category: Category filter (default OVERALL)
+            timePeriod: Time period filter (default DAY)
+            orderBy: Order by field (default PNL)
             limit: Number of entries per request (default 50)
             max_offset: Maximum offset to fetch (default 10000)
         
@@ -185,8 +219,8 @@ class LeaderboardFetcher:
         self,
         worker_id: int,
         output_queue: Union[Queue, SwappableQueue],
-        category: str = "all",
-        timePeriod: str = "all"
+        category: Union[LeaderboardCategory, str] = LeaderboardCategory.OVERALL,
+        timePeriod: Union[LeaderboardTimePeriod, str] = LeaderboardTimePeriod.DAY
     ):
         """
         Worker thread that fetches leaderboard data from the market queue.
@@ -194,8 +228,8 @@ class LeaderboardFetcher:
         Args:
             worker_id: ID of this worker
             output_queue: Queue to add fetched leaderboard entries to
-            category: Category filter
-            timePeriod: Time period filter
+            category: Category filter (default OVERALL)
+            timePeriod: Time period filter (default DAY)
         """
         is_swappable = isinstance(output_queue, SwappableQueue)
         

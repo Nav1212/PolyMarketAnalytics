@@ -288,6 +288,8 @@ class FetcherCoordinator:
     def run_prices(
         self,
         token_ids: List[str],
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
         num_workers: Optional[int] = None,
         use_swappable: bool = True
     ) -> SwappableQueue:
@@ -296,6 +298,8 @@ class FetcherCoordinator:
         
         Args:
             token_ids: List of token IDs to fetch prices for
+            start_time: Start timestamp filter
+            end_time: End timestamp filter
             num_workers: Number of worker threads (default from config)
             use_swappable: Use SwappableQueue for output
         
@@ -325,7 +329,7 @@ class FetcherCoordinator:
         for i in range(num_workers):
             t = Thread(
                 target=self._price_fetcher._worker,
-                args=(i, output_queue),
+                args=(i, output_queue, start_time, end_time),
                 name=f"PriceFetcher-Worker-{i}"
             )
             t.start()
