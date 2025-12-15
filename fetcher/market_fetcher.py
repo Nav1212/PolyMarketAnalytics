@@ -53,7 +53,8 @@ class MarketFetcher:
 
     def close(self):
         """Close HTTP client"""
-        self.client.close()
+        # ClobClient doesn't have a close method, so we just pass
+        pass
     def __enter__(self):
         return self
     

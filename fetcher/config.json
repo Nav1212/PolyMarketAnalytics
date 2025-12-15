@@ -23,7 +23,10 @@
         "connect_timeout": 10.0
     },
     "workers": {
-        "num_workers": 5
+        "trade": 2,
+        "market": 3,
+        "price": 2,
+        "leaderboard": 1
     },
     "cursors": {
         "enabled": true,

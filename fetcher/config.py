@@ -46,8 +46,11 @@ class ApiConfig:
 
 @dataclass
 class WorkersConfig:
-    """Worker configuration."""
-    num_workers: int = 5
+    """Worker configuration per function type."""
+    trade: int = 2
+    market: int = 3
+    price: int = 2
+    leaderboard: int = 1
 
 
 @dataclass
@@ -106,7 +109,10 @@ class Config:
                 "connect_timeout": self.api.connect_timeout
             },
             "workers": {
-                "num_workers": self.workers.num_workers
+                "trade": self.workers.trade,
+                "market": self.workers.market,
+                "price": self.workers.price,
+                "leaderboard": self.workers.leaderboard
             },
             "cursors": {
                 "enabled": self.cursors.enabled,

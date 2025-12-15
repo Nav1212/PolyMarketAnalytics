@@ -72,7 +72,7 @@ MARKET_TOKEN_SCHEMA = pa.schema([
     ('condition_Id', pa.string()),
     ('price', pa.float64()),
     ('token_id', pa.string()),
-    ('winner', pa.bool())
+    ('winner', pa.bool_())
 ])
 
 PRICE_SCHEMA = pa.schema([
