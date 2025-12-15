@@ -122,7 +122,6 @@ class FetcherCoordinator:
         
         # LeaderboardFetcher consumes from leaderboard_market_queue
         self._leaderboard_fetcher = LeaderboardFetcher(
-            market_queue=self._leaderboard_market_queue
         )
     
     def run_all(

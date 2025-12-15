@@ -41,6 +41,7 @@ class OutputDirsConfig:
 class ApiConfig:
     """API configuration."""
     data_api_base: str = "https://data-api.polymarket.com"
+    clob_api_base: str = "https://clob.polymarket.com"
     timeout: float = 30.0
     connect_timeout: float = 10.0
 

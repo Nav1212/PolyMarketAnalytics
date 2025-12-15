@@ -131,7 +131,7 @@ class LeaderboardFetcher:
                 "category": category_str,
                 "market": market,
                 "timePeriod": time_period_str,
-                "orderBy": order_by_str,
+                "OrderBy": order_by_str,
                 "limit": limit,
                 "offset": offset
             }
@@ -239,7 +239,7 @@ class LeaderboardFetcher:
                 entries = self.fetch_leaderboard_all(
                     category=category,
                     timePeriod=timePeriod, 
-                    OrderBy = OrderBy,
+                    orderBy = OrderBy,
                 )
                 
                 if entries:
