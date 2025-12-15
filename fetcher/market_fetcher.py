@@ -84,13 +84,25 @@ class MarketFetcher:
             if self._leaderboard_market_queue is not None and condition_id:
                 self._leaderboard_market_queue.put(condition_id)
             
-            # Write token IDs to price fetcher queue
+            # Write token IDs to price fetcher queue (with market start time)
             if self._price_token_queue is not None:
                 tokens = market.get("tokens", [])
+                # Get market start time from game_start_time or end_date_iso
+                market_start = market.get("game_start_time") or market.get("end_date_iso")
+                market_start_ts = None
+                if market_start:
+                    try:
+                        from datetime import datetime
+                        # Parse ISO format datetime
+                        dt = datetime.fromisoformat(market_start.replace('Z', '+00:00'))
+                        market_start_ts = int(dt.timestamp())
+                    except (ValueError, AttributeError):
+                        pass
                 for token in tokens:
                     token_id = token.get("token_id")
                     if token_id:
-                        self._price_token_queue.put(token_id)
+                        # Put tuple of (token_id, market_start_timestamp)
+                        self._price_token_queue.put((token_id, market_start_ts))
     
     @staticmethod
     def int_to_base64_urlsafe(n: int) -> str:

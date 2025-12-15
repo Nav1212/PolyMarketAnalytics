@@ -104,17 +104,43 @@ class PriceFetcher:
         if end_ts is None:
             end_ts = int(datetime.now().timestamp())
         if start_ts is None:
-            start_ts = 0
+            # Default to 30 days ago if no start time provided
+            start_ts = end_ts - (30 * 24 * 60 * 60)
         
-        params = {
-            "market": token_id,
-            "startTs": start_ts,
-            "endTs": end_ts,
-            "fidelity": fidelity
-        }
+        # Fetch in daily increments to avoid "interval too long" error
+        DAY_SECONDS = 24 * 60 * 60
+        all_results = []
         
-        # Acquire rate limit token before making request
-        self._manager.acquire_price(loop_start)
+        current_start = start_ts
+        while current_start < end_ts:
+            current_end = min(current_start + DAY_SECONDS, end_ts)
+            
+            params = {
+                "market": token_id,
+                "startTs": current_start,
+                "endTs": current_end,
+                "fidelity": fidelity
+            }
+            
+            chunk_results = self._fetch_price_chunk(token_id, params, loop_start)
+            all_results.extend(chunk_results)
+            
+            current_start = current_end
+            loop_start = None  # Only use loop_start for first request
+        
+        return all_results
+    
+    def _fetch_price_chunk(
+        self,
+        token_id: str,
+        params: Dict[str, Any],
+        loop_start: float = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch a single chunk of price history."""
+        if loop_start is not None:
+            self._manager.acquire_price(loop_start)
+        else:
+            self._manager.acquire_price(time.time())
         
         try:
             response = self.client.get(
@@ -182,19 +208,30 @@ class PriceFetcher:
         while True:
             try:
                 # Get token from queue (non-blocking with timeout)
-                token_id = self._market_queue.get(timeout=1)
-                if token_id is None:
+                # Queue now contains tuples of (token_id, market_start_ts)
+                queue_item = self._market_queue.get(timeout=1)
+                if queue_item is None:
                     self._market_queue.task_done()
                     if not is_swappable:
                         price_queue.put(None)
                     return
+                
+                # Handle both tuple format and legacy string format
+                if isinstance(queue_item, tuple):
+                    token_id, market_start_ts = queue_item
+                else:
+                    token_id = queue_item
+                    market_start_ts = None
+                
+                # Use market start time if available, otherwise use provided start_time
+                effective_start = market_start_ts if market_start_ts is not None else start_time
                 
                 print(f"Worker {worker_id}: Processing token {token_id[:10] if len(token_id) > 10 else token_id}...")
                 
                 loop_start = time.time()
                 prices = self.fetch_price_history(
                     token_id=token_id,
-                    start_ts=start_time,
+                    start_ts=effective_start,
                     end_ts=end_time,
                     fidelity=fidelity,
                     loop_start=loop_start
