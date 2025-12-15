@@ -56,7 +56,8 @@ ignore = [
 known-first-party = ["fetcher"]
 
 [tool.pyright]
-include = ["fetcher"]
+include = ["fetcher", "tests"]
 exclude = ["**/__pycache__"]
 pythonVersion = "3.10"
 typeCheckingMode = "basic"
+extraPaths = ["fetcher"]

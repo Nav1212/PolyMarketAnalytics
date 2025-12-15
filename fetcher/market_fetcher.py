@@ -26,12 +26,12 @@ class MarketFetcher:
     def __init__(
         self,
         timeout: float = 30.0,
-        worker_manager: WorkerManager = None,
-        config: Config = None,
-        trade_market_queue: Queue = None,
-        price_token_queue: Queue = None,
-        leaderboard_market_queue: Queue = None,
-        output_queue: Union[Queue, SwappableQueue] = None
+        worker_manager: Optional[WorkerManager] = None,
+        config: Optional[Config] = None,
+        trade_market_queue: Optional[Queue] = None,
+        price_token_queue: Optional[Queue] = None,
+        leaderboard_market_queue: Optional[Queue] = None,
+        output_queue: Optional[Union[Queue, SwappableQueue]] = None
     ):
         """
         Initialize the market fetcher.
@@ -200,7 +200,7 @@ class MarketFetcher:
         self,
         worker_id: int,
         output_queue: Union[Queue, SwappableQueue],
-        stop_event: threading.Event = None
+        stop_event: Optional[threading.Event] = None
     ):
         """
         Worker thread that fetches all markets.
@@ -249,9 +249,9 @@ class MarketFetcher:
     
     def run_workers(
         self,
-        output_queue: Union[Queue, SwappableQueue] = None,
-        num_workers: int = None,
-        stop_event: threading.Event = None
+        output_queue: Optional[Union[Queue, SwappableQueue]] = None,
+        num_workers: Optional[int] = None,
+        stop_event: Optional[threading.Event] = None
     ) -> List[threading.Thread]:
         """
         Start worker threads to fetch markets.
@@ -270,7 +270,7 @@ class MarketFetcher:
             raise ValueError("output_queue must be provided either in constructor or run_workers call")
         
         if num_workers is None:
-            num_workers = self._config.workers.market_workers
+            num_workers = self._config.workers.market
         
         threads = []
         for i in range(num_workers):

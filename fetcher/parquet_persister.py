@@ -243,7 +243,7 @@ def load_parquet_data(
             result = conn.execute("SELECT * FROM data").fetchdf()
         
         conn.close()
-        return result.to_dict('records')
+        return [dict(record) for record in result.to_dict('records')]
         
     except Exception as e:
         logger.error(f"Error loading data from {parquet_path}: {e}")

@@ -9,7 +9,7 @@ import logging
 import logging.handlers
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 
 
 # Log format with timestamp, level, module, and message
@@ -119,14 +119,15 @@ class LogContext:
     def __init__(self, logger: logging.Logger, **context):
         self.logger = logger
         self.context = context
-        self._old_factory = None
+        self._old_factory: Optional[Callable[..., logging.LogRecord]] = None
     
     def __enter__(self):
         self._old_factory = logging.getLogRecordFactory()
         context = self.context
+        old_factory = self._old_factory
         
         def record_factory(*args, **kwargs):
-            record = self._old_factory(*args, **kwargs)
+            record = old_factory(*args, **kwargs)
             for key, value in context.items():
                 setattr(record, key, value)
             return record
@@ -135,12 +136,11 @@ class LogContext:
         return self
     
     def __exit__(self, *args):
-        logging.setLogRecordFactory(self._old_factory)
-
+        if self._old_factory is not None:
+            logging.setLogRecordFactory(self._old_factory)
 
 # Initialize logging on module import (can be reconfigured later)
 _initialized = False
-
 
 def ensure_logging_initialized():
     """Ensure logging is initialized (call once at startup)."""

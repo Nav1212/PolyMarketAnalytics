@@ -14,6 +14,13 @@ from queue import Queue
 import tempfile
 import json
 
+
+# Register integration marker
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "integration: marks tests as integration tests (may make real API calls)"
+    )
+
 # Add fetcher module to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "fetcher"))
 

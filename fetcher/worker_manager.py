@@ -261,7 +261,7 @@ def get_worker_manager() -> WorkerManager:
     return _default_manager
 
 
-def set_worker_manager(manager: WorkerManager) -> None:
-    """Set a custom WorkerManager as the default."""
+def set_worker_manager(manager: Optional[WorkerManager]) -> None:
+    """Set a custom WorkerManager as the default (or None to reset)."""
     global _default_manager
     _default_manager = manager

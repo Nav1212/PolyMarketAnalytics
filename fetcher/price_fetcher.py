@@ -11,13 +11,6 @@ import threading
 import time
 
 from swappable_queue import SwappableQueue
-from parquet_persister import (
-    ParquetPersister,
-    create_price_persisted_queue,
-    load_market_parquet,
-    save_cursor,
-    load_cursor
-)
 from worker_manager import WorkerManager, get_worker_manager
 from config import get_config, Config
 
@@ -29,10 +22,10 @@ class PriceFetcher:
     
     def __init__(
         self,
-        timeout: float = None,
-        worker_manager: WorkerManager = None,
-        config: Config = None,
-        market_queue: Queue = None,
+        timeout: Optional[float] = None,
+        worker_manager: Optional[WorkerManager] = None,
+        config: Optional[Config] = None,
+        market_queue: Optional[Queue] = None,
     ):
         """
         Initialize the price fetcher.
@@ -70,10 +63,10 @@ class PriceFetcher:
     def fetch_price_history(
         self,
         token_id: str,
-        start_ts: int = None,
-        end_ts: int = None,
+        start_ts: Optional[int] = None,
+        end_ts: Optional[int] = None,
         fidelity: int = 1,
-        loop_start: float = None
+        loop_start: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Fetch price history for a specific token.
@@ -134,7 +127,7 @@ class PriceFetcher:
         self,
         token_id: str,
         params: Dict[str, Any],
-        loop_start: float = None
+        loop_start: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """Fetch a single chunk of price history."""
         if loop_start is not None:

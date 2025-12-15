@@ -35,10 +35,10 @@ class TradeFetcher:
     
     def __init__(
         self,
-        timeout: float = None,
-        worker_manager: WorkerManager = None,
-        config: Config = None,
-        market_queue: Queue = None,
+        timeout: Optional[float] = None,
+        worker_manager: Optional[WorkerManager] = None,
+        config: Optional[Config] = None,
+        market_queue: Optional[Queue] = None,
     ):
         """
         Initialize the trade fetcher.
@@ -82,7 +82,7 @@ class TradeFetcher:
         offset: int =0,
         limit: int = 500,
         user_id: str ="",
-        loop_start: float = None
+        loop_start: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Fetch trades for a specific market within a time range.
@@ -273,26 +273,13 @@ class TradeFetcher:
 if __name__ == "__main__":
     # Example: Fetch trades for a market
     with TradeFetcher() as fetcher:
-
         market_id = "0x1234567890abcdef1234567890abcdef12345678"
-        start_ts = int(datetime(2024, 12, 1).timestamp())
-        end_ts = int(datetime(2024, 12, 30).timestamp())
         
         logger.info(f"Fetching trades for market {market_id[:16]}...")
-        logger.info(f"Time range: {start_ts} to {end_ts}")
         
-        trades = fetcher.fetch_all_trades(
+        trades = fetcher.fetch_trades(
             market=market_id,
-            start_time=start_ts,
-            end_time=end_ts
+            limit=100
         )
         
-        logger.info(f"Fetched {trades.qsize()} total trades")
-        
-        if trades.qsize() == 500:
-            logger.info("500th trade:")
-            # Retrieve the 500th trade (index 499) from the queue without losing data
-            trades_list = []
-            for _ in range(trades.qsize()):
-                trades_list.append(trades.get())
-            print(trades_list[499])
+        logger.info(f"Fetched {len(trades)} trades")

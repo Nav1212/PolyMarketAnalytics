@@ -6,7 +6,7 @@ Fetches leaderboard data for markets from the Data API
 import httpx
 import threading
 from enum import Enum
-from typing import List, Dict, Any, Generator, Union
+from typing import List, Dict, Any, Generator, Union, Optional
 from queue import Queue, Empty
 import time
 
@@ -50,9 +50,9 @@ class LeaderboardFetcher:
     
     def __init__(
         self,
-        timeout: float = None,
-        worker_manager: WorkerManager = None,
-        config: Config = None,
+        timeout: Optional[float] = None,
+        worker_manager: Optional[WorkerManager] = None,
+        config: Optional[Config] = None,
     ):
         """
         Initialize the leaderboard fetcher.
@@ -96,7 +96,7 @@ class LeaderboardFetcher:
         orderBy: Union[LeaderboardOrderBy, str] = LeaderboardOrderBy.PNL,
         limit: int = 50,
         max_offset: int = 10000,
-        loop_start: float = None
+        loop_start: Optional[float] = None
     ) -> Generator[Any, None, None]:
         """
         Fetch leaderboard for a specific market.
@@ -279,7 +279,7 @@ class LeaderboardFetcher:
         output_queue: Union[Queue, SwappableQueue],
         category: Union[LeaderboardCategory, str] = LeaderboardCategory.OVERALL,
         timePeriod: Union[LeaderboardTimePeriod, str] = LeaderboardTimePeriod.DAY,
-        num_workers: int = None
+        num_workers: Optional[int] = None
     ) -> List[threading.Thread]:
         """
         Start worker threads to fetch leaderboard data from the market queue.
