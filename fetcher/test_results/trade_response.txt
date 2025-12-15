@@ -1,12 +1,12 @@
 ============================================================
 ENDPOINT TEST RESULTS
-Generated: 2025-12-14T20:57:21.221061
+Generated: 2025-12-14T21:02:28.895055
 ============================================================
 
 TIMING INFORMATION:
 -------------------
-Total Time: 0.3015 seconds
-Request Time: 0.1540 seconds
+Total Time: 0.2996 seconds
+Request Time: 0.1472 seconds
 Rate Limit Wait: 0.0000 seconds
 
 RESPONSE DATA:

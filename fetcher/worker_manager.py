@@ -61,7 +61,7 @@ class TokenBucket:
 
 class WorkerManager:
     """
-    Centralized manager for rate limiting across trade, market, and price fetchers.
+    Centralized manager for rate limiting across trade, market, price, and leaderboard fetchers.
     Tracks timing statistics for when workers first hit rate limits per loop.
     """
     
@@ -70,6 +70,7 @@ class WorkerManager:
         trade_rate: int = 70,
         market_rate: int = 100,
         price_rate: int = 100,
+        leaderboard_rate: int = 70,
         window_seconds: float = 10.0,
         config: "Config" = None
     ):
@@ -78,6 +79,7 @@ class WorkerManager:
             trade_rate: Requests per window for trade API (default 70)
             market_rate: Requests per window for market API (default 100)
             price_rate: Requests per window for price API (default 100)
+            leaderboard_rate: Requests per window for leaderboard API (default 70)
             window_seconds: Time window in seconds (default 10s)
             config: Optional Config object to load settings from
         """
@@ -86,17 +88,20 @@ class WorkerManager:
             trade_rate = config.rate_limits.trade
             market_rate = config.rate_limits.market
             price_rate = config.rate_limits.price
+            leaderboard_rate = config.rate_limits.leaderboard
             window_seconds = config.rate_limits.window_seconds
         
         # Separate token buckets
         self._trade_bucket = TokenBucket(trade_rate, window_seconds)
         self._market_bucket = TokenBucket(market_rate, window_seconds)
         self._price_bucket = TokenBucket(price_rate, window_seconds)
+        self._leaderboard_bucket = TokenBucket(leaderboard_rate, window_seconds)
         
         # Timing stats - one deque per job type (lock-free appends)
         self._trade_hit_times: deque = deque()
         self._market_hit_times: deque = deque()
         self._price_hit_times: deque = deque()
+        self._leaderboard_hit_times: deque = deque()
     
     def acquire_trade(self, loop_start: Optional[float] = None) -> None:
         """
@@ -137,6 +142,19 @@ class WorkerManager:
             elapsed = time.time() - loop_start
             self._price_hit_times.append(elapsed)
     
+    def acquire_leaderboard(self, loop_start: Optional[float] = None) -> None:
+        """
+        Acquire a token for leaderboard API requests.
+        If rate limit is hit and loop_start provided, records time-to-first-hit.
+        
+        Args:
+            loop_start: Timestamp when current loop iteration started (from time.time())
+        """
+        waited = self._leaderboard_bucket.acquire()
+        if waited and loop_start is not None:
+            elapsed = time.time() - loop_start
+            self._leaderboard_hit_times.append(elapsed)
+    
     def _compute_stats(self, times: deque) -> dict:
         """Compute average, median, and fastest from a deque of times."""
         if not times:
@@ -162,6 +180,10 @@ class WorkerManager:
     def get_price_stats(self) -> Optional[dict]:
         """Get timing statistics for price rate limit hits."""
         return self._compute_stats(self._price_hit_times)
+    
+    def get_leaderboard_stats(self) -> Optional[dict]:
+        """Get timing statistics for leaderboard rate limit hits."""
+        return self._compute_stats(self._leaderboard_hit_times)
     
     def print_statistics(self) -> None:
         """Print timing statistics for both job types."""
@@ -205,6 +227,18 @@ class WorkerManager:
         else:
             print("  No rate limit hits recorded")
         
+        # Leaderboard stats
+        print("\n[LEADERBOARD API]")
+        leaderboard_stats = self.get_leaderboard_stats()
+        if leaderboard_stats:
+            print(f"  Total rate limit hits: {leaderboard_stats['count']}")
+            print(f"  Average time to hit:   {leaderboard_stats['average']:.4f}s")
+            print(f"  Median time to hit:    {leaderboard_stats['median']:.4f}s")
+            print(f"  Fastest time to hit:   {leaderboard_stats['fastest']:.4f}s")
+            print(f"  Slowest time to hit:   {leaderboard_stats['slowest']:.4f}s")
+        else:
+            print("  No rate limit hits recorded")
+        
         print("\n" + "=" * 60)
     
     def reset_statistics(self) -> None:
@@ -212,6 +246,7 @@ class WorkerManager:
         self._trade_hit_times.clear()
         self._market_hit_times.clear()
         self._price_hit_times.clear()
+        self._leaderboard_hit_times.clear()
 
 
 # Global singleton for easy access (optional pattern)

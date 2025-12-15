@@ -3,6 +3,7 @@
         "trade": 70,
         "market": 100,
         "price": 100,
+        "leaderboard": 70,
         "window_seconds": 10.0
     },
     "queues": {

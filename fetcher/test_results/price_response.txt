@@ -1,20 +1,20 @@
 ============================================================
 ENDPOINT TEST RESULTS
-Generated: 2025-12-14T20:57:21.513658
+Generated: 2025-12-14T21:02:29.195591
 ============================================================
 
 TIMING INFORMATION:
 -------------------
-Total Time: 0.2902 seconds
-Request Time: 0.1398 seconds
+Total Time: 0.2992 seconds
+Request Time: 0.1508 seconds
 Rate Limit Wait: 0.0000 seconds
 
 RESPONSE DATA:
 --------------
 {
   "token_id": "21742633143463906290569050155826241533067272736897614950488156847949938836455",
-  "start_ts": 1765677441,
-  "end_ts": 1765763841,
+  "start_ts": 1765677749,
+  "end_ts": 1765764149,
   "resolution": "1h",
   "total_prices": 0,
   "sample_prices": []

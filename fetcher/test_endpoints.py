@@ -15,6 +15,7 @@ from worker_manager import WorkerManager
 from market_fetcher import MarketFetcher
 from trade_fetcher import TradeFetcher
 from price_fetcher import PriceFetcher
+from leaderboard_fetcher import LeaderboardFetcher
 
 
 # Output directory for test results
@@ -266,11 +267,11 @@ def test_leaderboard_endpoint() -> Tuple[Any, Dict[str, float]]:
     # Use a known market for testing
     test_market = "0xbd31dc8a20211944f6b70f31557f1001557b59905b7738480ca09bd4532f84af"
     
-    with TradeFetcher(worker_manager=worker_manager, config=config) as fetcher:
+    with LeaderboardFetcher(worker_manager=worker_manager, config=config) as fetcher:
         print(f"  Fetching leaderboard for market: {test_market[:20]}...")
         
         rate_limit_start = time.time()
-        # Note: leaderboard uses trade rate limit
+        worker_manager.acquire_leaderboard(rate_limit_start)
         rate_limit_end = time.time()
         timing['rate_limit_wait'] = rate_limit_end - rate_limit_start
         

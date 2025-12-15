@@ -65,54 +65,6 @@ class TradeFetcher:
     
     def __exit__(self, *args):
         self.close()
-    
-    def fetch_leaderboard(self, market: str, category: str, timePeriod: str) -> Generator[Any, None, None]:
-        """
-        Fetch leaderboard for a specific market.
-        
-        Args:
-            market: Market condition_id (e.g., "0x123abc...")
-        
-        Returns:
-            List of leaderboard entries
-        
-        Example:
-            >>> leaderboard = TradeFetcher.fetch_leaderboard("0x123abc...")
-            >>> for entry in leaderboard:
-            ...     print(entry)
-        """
-        offset = 0 
-        while offset<10000:
-
-            params = {
-                "category": category,
-                "market": market,
-                "timePeriod": timePeriod,
-                "orderBy": "VOL",
-                "limit": 50,
-                "offset": offset
-            }
-            loop_start = time.time()
-            self._manager.acquire_trade(loop_start)
-            try:
-                response = self.client.get(
-                    f"{self._data_api_base}/v1/leaderboard",
-                    params=params,
-                    timeout=30.0
-                )
-                yield response 
-                offset +=50
-            except httpx.HTTPStatusError as e:
-                print(f"HTTP error fetching leaderboard: {e.response.status_code} - {e.response.text}")
-                return []
-            
-            except httpx.RequestError as e:
-                print(f"Request error fetching leaderboard: {e}")
-                return []
-            
-            except Exception as e:
-                print(f"Unexpected error fetching leaderboard: {e}")
-                return []
 
     def fetch_price_history(market: str)->List[Dict[str, Any]]:
         """

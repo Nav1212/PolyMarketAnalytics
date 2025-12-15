@@ -15,6 +15,7 @@ class RateLimitsConfig:
     trade: int = 70
     market: int = 100
     price: int = 100
+    leaderboard: int = 70
     window_seconds: float = 10.0
 
 
@@ -89,6 +90,7 @@ class Config:
                 "trade": self.rate_limits.trade,
                 "market": self.rate_limits.market,
                 "price": self.rate_limits.price,
+                "leaderboard": self.rate_limits.leaderboard,
                 "window_seconds": self.rate_limits.window_seconds
             },
             "queues": {
