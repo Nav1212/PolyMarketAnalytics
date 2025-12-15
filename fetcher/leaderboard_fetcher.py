@@ -275,8 +275,8 @@ class LeaderboardFetcher:
     def run_workers(
         self,
         output_queue: Union[Queue, SwappableQueue],
-        category: str = "all",
-        timePeriod: str = "all",
+        category: Union[LeaderboardCategory, str] = LeaderboardCategory.OVERALL,
+        timePeriod: Union[LeaderboardTimePeriod, str] = LeaderboardTimePeriod.DAY,
         num_workers: int = None
     ) -> List[threading.Thread]:
         """
@@ -284,8 +284,8 @@ class LeaderboardFetcher:
         
         Args:
             output_queue: Queue to add fetched leaderboard entries to
-            category: Category filter
-            timePeriod: Time period filter
+            category: Category filter (default OVERALL)
+            timePeriod: Time period filter (default DAY)
             num_workers: Number of workers (uses config if None)
         
         Returns:

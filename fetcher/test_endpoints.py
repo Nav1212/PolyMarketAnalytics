@@ -280,8 +280,8 @@ def test_leaderboard_endpoint() -> Tuple[Any, Dict[str, float]]:
             # Get first batch from leaderboard generator
             leaderboard_gen = fetcher.fetch_leaderboard(
                 market=test_market,
-                category="all",
-                timePeriod="all"
+                category="OVERALL",
+                timePeriod="DAY"
             )
             
             # Get first response only

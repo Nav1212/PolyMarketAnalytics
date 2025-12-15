@@ -21,7 +21,8 @@
     "api": {
         "data_api_base": "https://data-api.polymarket.com",
         "timeout": 30.0,
-        "connect_timeout": 10.0
+        "connect_timeout": 10.0,
+        "clob_api_base": "https://clob.polymarket.com"
     },
     "workers": {
         "trade": 2,
