@@ -27,7 +27,8 @@ class TradeFetcher:
         self,
         timeout: float = None,
         worker_manager: WorkerManager = None,
-        config: Config = None
+        config: Config = None,
+        market_queue: Queue = None,
     ):
         """
         Initialize the trade fetcher.
@@ -38,7 +39,7 @@ class TradeFetcher:
             config: Config object (uses global config if None)
         """
         self._config = config or get_config()
-        
+        self._market_queue = market_queue
         if timeout is None:
             timeout = self._config.api.timeout
         
@@ -133,10 +134,7 @@ class TradeFetcher:
     def _worker(
         self,
         worker_id: int,
-        market_queue: Queue,
         trade_queue: Union[Queue, SwappableQueue],
-        start_time: int,
-        end_time: int
     ):
         """
         Worker thread that fetches trades for markets from the market queue.
@@ -154,9 +152,9 @@ class TradeFetcher:
         while True:
             try:
                 # Get market from queue (non-blocking with timeout)
-                market = market_queue.get(timeout=1)
+                market = self._market_queue.get(timeout=1)
                 if market is None:
-                    market_queue.task_done()
+                    self._market_queue.task_done()
                     if not is_swappable:
                         trade_queue.put(None)
                     return
@@ -218,42 +216,6 @@ class TradeFetcher:
                 if not is_swappable:
                     trade_queue.put(None)
                 return
-    
-    def run_workers(
-        self,
-        market_queue: Queue,
-        output_queue: Union[Queue, SwappableQueue],
-        start_time: int,
-        end_time: int,
-        num_workers: int = None
-    ) -> List[threading.Thread]:
-        """
-        Start worker threads to fetch trades from the market queue.
-        
-        Args:
-            market_queue: Queue containing market IDs to process
-            output_queue: Queue to add fetched trades to
-            start_time: Start timestamp in Unix seconds
-            end_time: End timestamp in Unix seconds
-            num_workers: Number of workers (uses config if None)
-        
-        Returns:
-            List of started threads (caller should join them)
-        """
-        if num_workers is None:
-            num_workers = self._config.workers.trade
-        
-        threads = []
-        for i in range(num_workers):
-            t = threading.Thread(
-                target=self._worker,
-                args=(i, market_queue, output_queue, start_time, end_time),
-                daemon=True
-            )
-            t.start()
-            threads.append(t)
-        
-        return threads
     
 
 

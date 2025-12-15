@@ -52,11 +52,11 @@ class FetcherCoordinator:
         
         # Initialize WorkerManager with rate limits from config
         self._manager = WorkerManager(
-            trade_rate=self._config.rate_limit.trade_rate,
-            market_rate=self._config.rate_limit.market_rate,
-            price_rate=self._config.rate_limit.price_rate,
-            leaderboard_rate=self._config.rate_limit.leaderboard_rate,
-            window_seconds=self._config.rate_limit.window_seconds,
+            trade_rate=self._config.rate_limits.trade,
+            market_rate=self._config.rate_limits.market,
+            price_rate=self._config.rate_limits.price,
+            leaderboard_rate=self._config.rate_limits.leaderboard,
+            window_seconds=self._config.rate_limits.window_seconds,
             config=self._config
         )
         set_worker_manager(self._manager)
@@ -67,7 +67,7 @@ class FetcherCoordinator:
         self._leaderboard_market_queue: Optional[Queue] = None
         
         # Output queues
-        self._market_output_queue: Optional[SwappableQueue] = None
+        self._market_output_queue: Optional[Queue] = None
         self._trade_output_queue: Optional[SwappableQueue] = None
         self._price_output_queue: Optional[SwappableQueue] = None
         self._leaderboard_output_queue: Optional[SwappableQueue] = None
@@ -112,7 +112,7 @@ class FetcherCoordinator:
         
         # TradeFetcher consumes from trade_market_queue
         self._trade_fetcher = TradeFetcher(
-            output_queue=self._trade_output_queue
+            market_queue=self._market_output_queue
         )
         
         # PriceFetcher consumes from price_token_queue
@@ -151,10 +151,10 @@ class FetcherCoordinator:
         self._create_fetchers()
         
         # Get worker counts from config
-        market_workers = self._config.workers.market_workers
-        trade_workers = self._config.workers.trade_workers
-        price_workers = self._config.workers.price_workers
-        leaderboard_workers = self._config.workers.leaderboard_workers
+        market_workers = self._config.workers.market
+        trade_workers = self._config.workers.trade
+        price_workers = self._config.workers.price
+        leaderboard_workers = self._config.workers.leaderboard
         
         # Load Order 1: Start MarketFetcher
         market_thread = Thread(
@@ -223,7 +223,7 @@ class FetcherCoordinator:
         Returns:
             Output queue containing trade data
         """
-        num_workers = num_workers or self._config.workers.trade_workers
+        num_workers = num_workers or self._config.workers.trade
         
         # Create input queue and populate with market IDs
         input_queue = Queue()
@@ -269,7 +269,7 @@ class FetcherCoordinator:
         Returns:
             Output queue containing market data
         """
-        num_workers = num_workers or self._config.workers.market_workers
+        num_workers = num_workers or self._config.workers.market
         
         if use_swappable:
             output_queue = SwappableQueue()
@@ -305,7 +305,7 @@ class FetcherCoordinator:
         Returns:
             Output queue containing price data
         """
-        num_workers = num_workers or self._config.workers.price_workers
+        num_workers = num_workers or self._config.workers.price
         
         # Create input queue and populate with token IDs
         input_queue = Queue()
@@ -353,7 +353,7 @@ class FetcherCoordinator:
         Returns:
             Output queue containing leaderboard data
         """
-        num_workers = num_workers or self._config.workers.leaderboard_workers
+        num_workers = num_workers or self._config.workers.leaderboard
         
         # Create input queue and populate with market IDs
         input_queue = Queue()
@@ -406,17 +406,17 @@ class FetcherCoordinator:
         """Signal all fetchers to shut down by sending sentinel values."""
         # Send None sentinels to inter-fetcher queues
         if self._trade_market_queue:
-            num_trade_workers = self._config.workers.trade_workers
+            num_trade_workers = self._config.workers.trade
             for _ in range(num_trade_workers):
                 self._trade_market_queue.put(None)
         
         if self._price_token_queue:
-            num_price_workers = self._config.workers.price_workers
+            num_price_workers = self._config.workers.price
             for _ in range(num_price_workers):
                 self._price_token_queue.put(None)
         
         if self._leaderboard_market_queue:
-            num_leaderboard_workers = self._config.workers.leaderboard_workers
+            num_leaderboard_workers = self._config.workers.leaderboard
             for _ in range(num_leaderboard_workers):
                 self._leaderboard_market_queue.put(None)
     

@@ -152,10 +152,10 @@ def main():
     if args.mode == "all":
         # Run full pipeline: Markets → Trades/Prices/Leaderboard
         print("Starting full fetch pipeline...")
-        print(f"  Market Workers: {config.workers.market_workers}")
-        print(f"  Trade Workers: {config.workers.trade_workers}")
-        print(f"  Price Workers: {config.workers.price_workers}")
-        print(f"  Leaderboard Workers: {config.workers.leaderboard_workers}")
+        print(f"  Market Workers: {config.workers.market}")
+        print(f"  Trade Workers: {config.workers.trade}")
+        print(f"  Price Workers: {config.workers.price}")
+        print(f"  Leaderboard Workers: {config.workers.leaderboard}")
         print()
         
         queues = coordinator.run_all(
