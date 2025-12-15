@@ -18,7 +18,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 # Default data directory (outside repo)
-DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent / "PolyMarketData"
+DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent.parent / "PolyMarketData"
 DEFAULT_DB_PATH = str(DEFAULT_DATA_DIR / "polymarket.duckdb")
 DEFAULT_ARCHIVE_DIR = str(DEFAULT_DATA_DIR / "archive")
 

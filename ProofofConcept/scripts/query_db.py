@@ -244,7 +244,7 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Query Polymarket DuckDB database")
-    parser.add_argument("--db", default=None, help="Database path (default: ../PolyMarketData/polymarket.duckdb)")
+    parser.add_argument("--db", default=None, help=f"Database path (default: {DEFAULT_DB_PATH})")
     parser.add_argument("--query", "-q", help="SQL query to execute (non-interactive)")
     parser.add_argument("--schema", action="store_true", help="Show database schema")
     

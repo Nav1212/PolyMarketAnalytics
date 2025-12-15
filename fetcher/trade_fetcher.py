@@ -4,60 +4,54 @@ Fetches trades for a given market and time range
 """
 
 import httpx
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, Optional, Generator
 from datetime import datetime
 from queue import Queue, Empty
 import threading
 import time
 
 from swappable_queue import SwappableQueue
-from parquet_persister import ParquetPersister, create_persisted_queue
+from parquet_persister import (
+    ParquetPersister 
+)
+from worker_manager import WorkerManager, get_worker_manager
+from config import get_config, Config
+
+
 class TradeFetcher:
     """
     Simple class to fetch trades from Polymarket Data API
     """
-    RATE = 70  # requests per 10 second
-    tokens = RATE
-    last_refill = time.time()
-    lock = threading.Lock()
-
-
-    @classmethod
-    def acquire_token(cls):
-        while True:
-            with cls.lock:
-                now = time.time()
-                elapsed = now - cls.last_refill
-
-                # Refill tokens every second
-                if elapsed >= 10.0:
-                    cls.tokens = cls.RATE
-                    cls.last_refill = now
-
-                # If token available → consume and proceed
-                if cls.tokens > 0:
-                    cls.tokens -= 1
-                    return  # you now have permission
-            
-            # No token available → sleep very briefly and try again
-            time.sleep(0.01)
-
-    DATA_API_BASE = "https://data-api.polymarket.com"
     
-    def __init__(self, timeout: float = 30.0):
+    def __init__(
+        self,
+        timeout: float = None,
+        worker_manager: WorkerManager = None,
+        config: Config = None,
+        market_queue: Queue = None,
+    ):
         """
         Initialize the trade fetcher.
         
         Args:
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds (uses config if None)
+            worker_manager: WorkerManager instance for rate limiting (uses default if None)
+            config: Config object (uses global config if None)
         """
+        self._config = config or get_config()
+        self._market_queue = market_queue
+        if timeout is None:
+            timeout = self._config.api.timeout
+        
         self.client = httpx.Client(
-            timeout=httpx.Timeout(timeout, connect=10.0),
+            timeout=httpx.Timeout(timeout, connect=self._config.api.connect_timeout),
             headers={
                 "User-Agent": "PolymarketTradeFetcher/1.0",
                 "Accept": "application/json"
             }
         )
+        self._manager = worker_manager or get_worker_manager()
+        self._data_api_base = self._config.api.data_api_base
     
     def close(self):
         """Close HTTP client"""
@@ -68,14 +62,17 @@ class TradeFetcher:
     
     def __exit__(self, *args):
         self.close()
-    
+
+
     def fetch_trades(
         self,
         market: str,
         filtertype: str ="",
         filteramount: int =0,
         offset: int =0,
-        limit: int = 500
+        limit: int = 500,
+        user_id: str ="",
+        loop_start: float = None
     ) -> List[Dict[str, Any]]:
         """
         Fetch trades for a specific market within a time range.
@@ -85,6 +82,7 @@ class TradeFetcher:
             start_time: Start timestamp in Unix seconds
             end_time: End timestamp in Unix seconds
             limit: Maximum number of trades per request (max 500)
+            loop_start: Timestamp for rate limit timing tracking
         
         Returns:
             List of trade dictionaries
@@ -99,6 +97,9 @@ class TradeFetcher:
             ... )
             >>> print(f"Fetched {len(trades)} trades")
         """
+        if loop_start is None:
+            loop_start = time.time()
+        
         params = {
             "market": market,
             "limit": limit,
@@ -108,11 +109,11 @@ class TradeFetcher:
         }
         
         # Acquire rate limit token before making request
-        self.acquire_token()
+        self._manager.acquire_trade(loop_start)
         
         try:
             response = self.client.get(
-                f"{self.DATA_API_BASE}/trades",
+                f"{self._data_api_base}/trades",
                 params=params
             )
             response.raise_for_status()
@@ -130,61 +131,10 @@ class TradeFetcher:
             print(f"Unexpected error fetching trades: {e}")
             return []
     
-    def fetch_all_trades(
-        self,
-        market: str,
-        start_time: int,
-        end_time: int
-    ) -> Queue:
-        """
-        Fetch ALL trades for a market within a time range.
-        Makes multiple requests if necessary to get all trades.
-        
-        Args:
-            market: Market condition_id
-            start_time: Start timestamp in Unix seconds
-            end_time: End timestamp in Unix seconds
-        
-        Returns:
-            Queue containing all trades in the time range
-        """
-        trade_queue = Queue()
-        current_start = start_time
-        offset=0
-        filteramount = 0 
-        while current_start < end_time:
-            trades = self.fetch_trades(
-                market=market,
-                offset=offset,
-                filtertype ="cash",
-                filteramount=filteramount,
-                limit=500
-            )
-            
-            if not trades:
-                break
-            
-            # Add each trade to the queue
-            for trade in trades:
-                trade_queue.put(trade)
-            
-            
-            if len(trades) < 500 :
-                break
-            if(offset>=1000):
-                offset=0
-                filteramount += max(trades, key=lambda x: x['size'])['size'] 
-            offset+=500
-        
-        return trade_queue
-    
     def _worker(
         self,
         worker_id: int,
-        market_queue: Queue,
         trade_queue: Union[Queue, SwappableQueue],
-        start_time: int,
-        end_time: int
     ):
         """
         Worker thread that fetches trades for markets from the market queue.
@@ -202,9 +152,9 @@ class TradeFetcher:
         while True:
             try:
                 # Get market from queue (non-blocking with timeout)
-                market = market_queue.get(timeout=1)
+                market = self._market_queue.get(timeout=1)
                 if market is None:
-                    market_queue.task_done()
+                    self._market_queue.task_done()
                     if not is_swappable:
                         trade_queue.put(None)
                     return
@@ -212,14 +162,18 @@ class TradeFetcher:
                 print(f"Worker {worker_id}: Processing market {market[:10]}...")
                 
                 # Fetch all trades for this market
-                current_start = start_time
                 trade_count = 0
                 offset =0 
-                while current_start < end_time:
+                filteramount = 0 
+                while True:
+                    loop_start = time.time()
                     trades = self.fetch_trades(
                         market=market,
                         limit=500,
-                        offset=offset
+                        offset=offset,
+                        filtertype ="CASH",
+                        filteramount=filteramount,
+                        loop_start=loop_start
                     )
                     
                     if not trades:
@@ -235,18 +189,22 @@ class TradeFetcher:
                             trade_queue.put(trade)
                             trade_count += 1
                     
+                    # Set floor to 50th percentile of trade sizes
+                    sizes = sorted([t['size'] for t in trades])
+                    median_size = sizes[len(sizes) // 2]
                     # Get the timestamp of the last trade to continue from there
-                    last_trade_ts = trades[-1].get('timestamp', 0)+1
-                    
                     # If we got less than the limit, we've fetched everything
-                    if len(trades) < 500 or offset>=1000:
+                    if len(trades) < 500:
                         break
+                    if offset >=1000:
+                        filteramount += int(median_size)
+                        offset =0
                     offset+=500
-                    print(f"Worker {worker_id}: Fetched {trade_count} trades so far with the last timestamp of {last_trade_ts}")
+
+                    print(f"Worker {worker_id}: Fetched {trade_count} ")
                     # Move to the next batch (start after the last trade)
-                    current_start = last_trade_ts + 1
                 print(f"Worker {worker_id}: Finished market {market[:10]}, total trades: {trade_count}")                
-                market_queue.task_done()
+                self._market_queue.task_done()
             except Empty:
                 # Timeout on get() → loop again, don't exit
                 continue
@@ -254,63 +212,11 @@ class TradeFetcher:
             except Exception as e:
                 print(f"Worker {worker_id}: Error - {e}")
                 if market is not None:
-                    market_queue.task_done()
+                    self._market_queue.task_done()
                 if not is_swappable:
                     trade_queue.put(None)
                 return
     
-    def fetch_trades_multithreaded_testing(
-        self,
-        market_queue: Queue,
-        start_time: int,
-        end_time: int,
-        num_workers: int = 5,
-        batch_threshold: int = 1000000
-    ) -> Queue:
-        """
-        Fetch trades for multiple markets using multiple worker threads.
-        
-        Args:
-            market_queue: Queue containing market IDs to process
-            start_time: Start timestamp in Unix seconds
-            end_time: End timestamp in Unix seconds
-            num_workers: Number of worker threads (default 5)
-        
-        Returns:
-            Queue containing all fetched trades from all markets
-        """
-        # Create persisted queue
-        trade_queue, persister = create_persisted_queue(
-            threshold=batch_threshold,
-            output_dir="data/trades",
-            auto_start=True
-        )
-        threads = []        
-        # Create and start worker threads
-        for i in range(num_workers):
-            thread = threading.Thread(
-                target=self._worker,
-                args=(i + 1, market_queue, trade_queue, start_time, end_time)
-            )
-            thread.start()
-            threads.append(thread)
-        # Add sentinel values to stop workers
-
-            
-
-        # Wait for all markets to be processed
-        market_queue.join()
-        for _ in range(num_workers):
-            market_queue.put(None)        
-        
-        # Wait for all workers to finish
-        for thread in threads:
-            thread.join()
-        
-        print(f"All workers finished.")
-        persister.stop()
-        
-        return trade_queue
 
 
 # Example usage

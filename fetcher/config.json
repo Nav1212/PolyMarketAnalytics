@@ -1,0 +1,37 @@
+{
+    "rate_limits": {
+        "trade": 70,
+        "market": 100,
+        "price": 100,
+        "leaderboard": 70,
+        "window_seconds": 10.0
+    },
+    "queues": {
+        "trade_threshold": 10000,
+        "market_threshold": 1000,
+        "market_token_threshold": 5000,
+        "price_threshold": 10000
+    },
+    "output_dirs": {
+        "trade": "data/trades",
+        "market": "data/markets",
+        "market_token": "data/market_tokens",
+        "price": "data/prices"
+    },
+    "api": {
+        "data_api_base": "https://data-api.polymarket.com",
+        "timeout": 30.0,
+        "connect_timeout": 10.0,
+        "clob_api_base": "https://clob.polymarket.com"
+    },
+    "workers": {
+        "trade": 2,
+        "market": 3,
+        "price": 2,
+        "leaderboard": 1
+    },
+    "cursors": {
+        "enabled": true,
+        "filename": "cursor.json"
+    }
+}

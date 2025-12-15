@@ -1,0 +1,38 @@
+Test Run: 2025-12-14T21:02:29.481199
+
+TIMING SUMMARY:
+------------------------------------------------------------------------------------------
+Endpoint        Total (s)    Request (s)  Rate Limit (s) Req/10s (1 worker) Workers to Hit Limit
+------------------------------------------------------------------------------------------
+market          0.6317       0.6315       0.0000         15.8               7                   
+trade           0.2996       0.1472       0.0000         67.9               2                   
+price           0.2992       0.1508       0.0000         66.3               2                   
+leaderboard     0.2831       0.1354       0.0000         73.9               1                   
+------------------------------------------------------------------------------------------
+
+RATE LIMIT CONFIG (per 10.0s window):
+----------------------------------------
+  Market:      100 requests
+  Trade:       70 requests
+  Price:       100 requests
+  Leaderboard: 70 requests (uses trade limit)
+
+CONFIGURED WORKERS:
+----------------------------------------
+  Market:      3 workers
+  Trade:       2 workers
+  Price:       2 workers
+  Leaderboard: 1 workers
+
+WORKER ESTIMATE EXPLANATION:
+----------------------------------------
+  'Req/10s (1 worker)' = How many requests 1 worker can make in 10 seconds
+  'Workers to Hit Limit' = Minimum workers needed to saturate the rate limit
+  Formula: ceil(rate_limit / requests_per_worker)
+
+STATUS:
+----------------------------------------
+market               ✓ SUCCESS
+trade                ✓ SUCCESS
+price                ✓ SUCCESS
+leaderboard          ✓ SUCCESS
