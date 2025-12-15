@@ -12,11 +12,7 @@ import time
 
 from swappable_queue import SwappableQueue
 from parquet_persister import (
-    ParquetPersister, 
-    create_trade_persisted_queue,
-    load_market_parquet,
-    save_cursor,
-    load_cursor
+    ParquetPersister 
 )
 from worker_manager import WorkerManager, get_worker_manager
 from config import get_config, Config
@@ -65,52 +61,6 @@ class TradeFetcher:
     
     def __exit__(self, *args):
         self.close()
-
-    def fetch_price_history(market: str)->List[Dict[str, Any]]:
-        """
-        Fetch price history for a specific market.
-        
-        Args:
-            market: Market condition_id (e.g., "0x123abc...")
-        
-        Returns:
-            List of price history entries
-        
-        Example:
-            >>> price_history = TradeFetcher.fetch_price_history("0x123abc...")
-            >>> for entry in price_history:
-            ...     print(entry)
-        """
-        start_ts = 0
-        end_ts = datetime.now().timestamp()   
-        while start_ts < end_ts:
-            params = {
-                "market": market,
-                "startTs": start_ts,
-                "endTs": end_ts,
-                "resolution": "1m"
-            }
-            
-            try:
-                response = httpx.get(
-                    f"{TradeFetcher.DATA_API_BASE}/price-history",
-                    params=params,
-                    timeout=30.0
-                )
-        
-            
-            except httpx.HTTPStatusError as e:
-                print(f"HTTP error fetching price history: {e.response.status_code} - {e.response.text}")
-                return []
-            
-            except httpx.RequestError as e:
-                print(f"Request error fetching price history: {e}")
-                return []
-            
-            except Exception as e:
-                print(f"Unexpected error fetching price history: {e}")
-                return []
-        return response
 
 
     def fetch_trades(
@@ -269,97 +219,42 @@ class TradeFetcher:
                     trade_queue.put(None)
                 return
     
-    def fetch_trades_multithreaded_testing(
+    def run_workers(
         self,
-        market_queue: Queue = None,
-        market_parquet_path: str = None,
-        start_time: int = None,
-        end_time: int = None,
-        num_workers: int = None,
-        batch_threshold: int = None,
-        output_dir: str = None
-    ) -> Queue:
+        market_queue: Queue,
+        output_queue: Union[Queue, SwappableQueue],
+        start_time: int,
+        end_time: int,
+        num_workers: int = None
+    ) -> List[threading.Thread]:
         """
-        Fetch trades for multiple markets using multiple worker threads.
+        Start worker threads to fetch trades from the market queue.
         
         Args:
-            market_queue: Queue containing market IDs to process (mutually exclusive with market_parquet_path)
-            market_parquet_path: Path to market parquet files to load market IDs from
+            market_queue: Queue containing market IDs to process
+            output_queue: Queue to add fetched trades to
             start_time: Start timestamp in Unix seconds
             end_time: End timestamp in Unix seconds
-            num_workers: Number of worker threads (uses config if None)
-            batch_threshold: Queue threshold for parquet writes (uses config if None)
-            output_dir: Output directory for trade parquets (uses config if None)
+            num_workers: Number of workers (uses config if None)
         
         Returns:
-            Queue containing all fetched trades from all markets
+            List of started threads (caller should join them)
         """
-        # Use config defaults
         if num_workers is None:
-            num_workers = self._config.workers.num_workers
-        if batch_threshold is None:
-            batch_threshold = self._config.queues.trade_threshold
-        if output_dir is None:
-            output_dir = self._config.output_dirs.trade
+            num_workers = self._config.workers.trade
         
-        # Load markets from parquet if path provided
-        if market_parquet_path is not None:
-            market_ids = load_market_parquet(market_parquet_path)
-            market_queue = Queue()
-            for market_id in market_ids:
-                market_queue.put(market_id)
-            print(f"Loaded {len(market_ids)} markets from parquet")
-        elif market_queue is None:
-            raise ValueError("Either market_queue or market_parquet_path must be provided")
-        
-        # Load cursor to resume from last run
-        cursor = load_cursor(output_dir, self._config.cursors.filename)
-        if cursor and self._config.cursors.enabled:
-            print(f"[TradeFetcher] Resuming from cursor: {cursor}")
-        
-        # Create persisted queue for trades
-        trade_queue, persister = create_trade_persisted_queue(
-            threshold=batch_threshold,
-            output_dir=output_dir,
-            auto_start=True
-        )
-        threads = []        
-        # Create and start worker threads
+        threads = []
         for i in range(num_workers):
-            thread = threading.Thread(
+            t = threading.Thread(
                 target=self._worker,
-                args=(i + 1, market_queue, trade_queue, start_time, end_time)
+                args=(i, market_queue, output_queue, start_time, end_time),
+                daemon=True
             )
-            thread.start()
-            threads.append(thread)
-        # Add sentinel values to stop workers
-
-            
-
-        # Wait for all markets to be processed
-        market_queue.join()
-        for _ in range(num_workers):
-            market_queue.put(None)        
+            t.start()
+            threads.append(t)
         
-        # Wait for all workers to finish
-        for thread in threads:
-            thread.join()
-        
-        print(f"All workers finished.")
-        persister.stop()
-        
-        # Save cursor for next run
-        if self._config.cursors.enabled:
-            cursor_data = {
-                "last_run": datetime.now().isoformat(),
-                "start_time": start_time,
-                "end_time": end_time,
-                "markets_processed": market_queue.qsize() if hasattr(market_queue, 'qsize') else 0,
-                "records_written": persister.stats.get("total_records_written", 0)
-            }
-            save_cursor(output_dir, cursor_data, self._config.cursors.filename)
-        
-        return trade_queue
+        return threads
+    
 
 
 # Example usage

@@ -29,7 +29,9 @@ class MarketFetcher:
         worker_manager: WorkerManager = None,
         config: Config = None,
         trade_market_queue: Queue = None,
-        price_token_queue: Queue = None
+        price_token_queue: Queue = None,
+        leaderboard_market_queue: Queue = None,
+        output_queue: Union[Queue, SwappableQueue] = None
     ):
         """
         Initialize the market fetcher.
@@ -40,6 +42,8 @@ class MarketFetcher:
             config: Config object (uses global config if None)
             trade_market_queue: Queue to write market condition IDs for trade fetcher
             price_token_queue: Queue to write token IDs for price fetcher
+            leaderboard_market_queue: Queue to write market condition IDs for leaderboard fetcher
+            output_queue: Queue to write market data to (used by coordinator)
         """
         self._config = config or get_config()
         self.client = ClobClient(
@@ -49,12 +53,13 @@ class MarketFetcher:
         self._manager = worker_manager or get_worker_manager()
         self._trade_market_queue = trade_market_queue
         self._price_token_queue = price_token_queue
+        self._leaderboard_market_queue = leaderboard_market_queue
+        self._output_queue = output_queue
     
-
     def close(self):
-        """Close HTTP client"""
-        # ClobClient doesn't have a close method, so we just pass
+        """Close resources"""
         pass
+
     def __enter__(self):
         return self
     
@@ -63,7 +68,7 @@ class MarketFetcher:
     
     def _enqueue_markets_for_fetchers(self, markets: List[Dict[str, Any]]) -> None:
         """
-        Write market condition IDs and token IDs to the trade and price queues.
+        Write market condition IDs and token IDs to the trade, price, and leaderboard queues.
         
         Args:
             markets: List of market dictionaries from API
@@ -74,6 +79,10 @@ class MarketFetcher:
             # Write to trade fetcher queue
             if self._trade_market_queue is not None and condition_id:
                 self._trade_market_queue.put(condition_id)
+            
+            # Write to leaderboard fetcher queue
+            if self._leaderboard_market_queue is not None and condition_id:
+                self._leaderboard_market_queue.put(condition_id)
             
             # Write token IDs to price fetcher queue
             if self._price_token_queue is not None:
@@ -173,6 +182,95 @@ class MarketFetcher:
         
         print(f"Total markets fetched and persisted: {total_markets}")
         return market_queue
+    
+    def _worker(
+        self,
+        worker_id: int,
+        output_queue: Union[Queue, SwappableQueue],
+        stop_event: threading.Event = None
+    ):
+        """
+        Worker thread that fetches all markets.
+        
+        Args:
+            worker_id: ID of this worker
+            output_queue: Queue to add fetched markets to
+            stop_event: Optional event to signal stop
+        """
+        is_swappable = isinstance(output_queue, SwappableQueue)
+        cursor = 0
+        total_markets = 0
+        
+        print(f"[Market Worker {worker_id}] Starting market fetch...")
+        
+        while stop_event is None or not stop_event.is_set():
+            loop_start = time.time()
+            self._manager.acquire_market(loop_start)
+            
+            try:
+                response = self.client.get_markets(next_cursor=self.int_to_base64_urlsafe(cursor))
+                batch = response.get("data", [])
+                
+                if not batch:
+                    break
+                
+                # Enqueue for downstream fetchers
+                self._enqueue_markets_for_fetchers(batch)
+                
+                # Add to output queue
+                if is_swappable:
+                    output_queue.put_many(batch)
+                else:
+                    for market in batch:
+                        output_queue.put(market)
+                
+                total_markets += len(batch)
+                print(f"[Market Worker {worker_id}] Fetched {len(batch)} markets (total: {total_markets})")
+                cursor += 1
+                
+            except Exception as e:
+                print(f"[Market Worker {worker_id}] Error: {e}")
+                break
+        
+        print(f"[Market Worker {worker_id}] Finished, total markets: {total_markets}")
+    
+    def run_workers(
+        self,
+        output_queue: Union[Queue, SwappableQueue] = None,
+        num_workers: int = None,
+        stop_event: threading.Event = None
+    ) -> List[threading.Thread]:
+        """
+        Start worker threads to fetch markets.
+        
+        Args:
+            output_queue: Queue to add fetched markets to (uses instance output_queue if None)
+            num_workers: Number of workers (uses config if None, typically 1 for markets)
+            stop_event: Optional event to signal stop
+        
+        Returns:
+            List of started threads (caller should join them)
+        """
+        # Use instance output queue if not provided
+        output_queue = output_queue or self._output_queue
+        if output_queue is None:
+            raise ValueError("output_queue must be provided either in constructor or run_workers call")
+        
+        if num_workers is None:
+            num_workers = self._config.workers.market_workers
+        
+        threads = []
+        for i in range(num_workers):
+            t = threading.Thread(
+                target=self._worker,
+                args=(i, output_queue, stop_event),
+                daemon=True
+            )
+            t.start()
+            threads.append(t)
+        
+        return threads
+
 
 ##testing implementation
 def main():

@@ -4,9 +4,12 @@ Fetches leaderboard data for markets from the Data API
 """
 
 import httpx
-from typing import List, Dict, Any, Generator
+import threading
+from typing import List, Dict, Any, Generator, Union
+from queue import Queue, Empty
 import time
 
+from swappable_queue import SwappableQueue
 from worker_manager import WorkerManager, get_worker_manager
 from config import get_config, Config
 
@@ -174,3 +177,98 @@ class LeaderboardFetcher:
                 all_entries.append(data)
         
         return all_entries
+    
+    def _worker(
+        self,
+        worker_id: int,
+        market_queue: Queue,
+        output_queue: Union[Queue, SwappableQueue],
+        category: str = "all",
+        timePeriod: str = "all"
+    ):
+        """
+        Worker thread that fetches leaderboard data from the market queue.
+        
+        Args:
+            worker_id: ID of this worker
+            market_queue: Queue containing market IDs to process
+            output_queue: Queue to add fetched leaderboard entries to
+            category: Category filter
+            timePeriod: Time period filter
+        """
+        is_swappable = isinstance(output_queue, SwappableQueue)
+        
+        while True:
+            try:
+                market = market_queue.get(timeout=1)
+                if market is None:
+                    market_queue.task_done()
+                    if not is_swappable:
+                        output_queue.put(None)
+                    return
+                
+                display_id = market[:16] if len(market) > 16 else market
+                print(f"[Leaderboard Worker {worker_id}] Processing market {display_id}...")
+                
+                entries = self.fetch_leaderboard_all(
+                    market=market,
+                    category=category,
+                    timePeriod=timePeriod
+                )
+                
+                if entries:
+                    if is_swappable:
+                        output_queue.put_many(entries)
+                    else:
+                        for entry in entries:
+                            output_queue.put(entry)
+                    
+                    print(f"[Leaderboard Worker {worker_id}] Fetched {len(entries)} entries for {display_id}")
+                
+                market_queue.task_done()
+                
+            except Empty:
+                continue
+            
+            except Exception as e:
+                print(f"[Leaderboard Worker {worker_id}] Error: {e}")
+                try:
+                    market_queue.task_done()
+                except:
+                    pass
+    
+    def run_workers(
+        self,
+        market_queue: Queue,
+        output_queue: Union[Queue, SwappableQueue],
+        category: str = "all",
+        timePeriod: str = "all",
+        num_workers: int = None
+    ) -> List[threading.Thread]:
+        """
+        Start worker threads to fetch leaderboard data from the market queue.
+        
+        Args:
+            market_queue: Queue containing market IDs to process
+            output_queue: Queue to add fetched leaderboard entries to
+            category: Category filter
+            timePeriod: Time period filter
+            num_workers: Number of workers (uses config if None)
+        
+        Returns:
+            List of started threads (caller should join them)
+        """
+        if num_workers is None:
+            num_workers = self._config.workers.leaderboard
+        
+        threads = []
+        for i in range(num_workers):
+            t = threading.Thread(
+                target=self._worker,
+                args=(i, market_queue, output_queue, category, timePeriod),
+                daemon=True
+            )
+            t.start()
+            threads.append(t)
+        
+        return threads

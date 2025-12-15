@@ -2,13 +2,16 @@
 Main entry point for the Polymarket Trade Fetcher
 """
 
+import argparse
 from datetime import datetime
 from queue import Queue
 from trade_fetcher import TradeFetcher
 from worker_manager import WorkerManager
-from concurrent.futures import ThreadPoolExecutor
+from coordinator import FetcherCoordinator, LoadOrder
+from config import get_config
 import duckdb
 from pathlib import Path
+import time
 
 # Database path
 DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent / "PolyMarketData"
@@ -73,104 +76,195 @@ def fetch_trades(market_id: str, start_time: int, end_time: int):
         return trade_queue
 
 
-def fetch_trades_multimarket(market_ids: list, start_time: int, end_time: int, num_workers: int = 5, worker_manager: WorkerManager = None):
+def fetch_trades_multimarket(market_ids: list, start_time: int, end_time: int, num_workers: int = None):
     """
-    Fetch trades for multiple markets using worker threads.
+    Fetch trades for multiple markets using the coordinator.
     
     Args:
         market_ids: List of market condition_ids
         start_time: Start timestamp in Unix seconds
         end_time: End timestamp in Unix seconds
-        num_workers: Number of worker threads (default 5)
-        worker_manager: WorkerManager instance for rate limiting
+        num_workers: Number of worker threads (uses config if None)
     
     Returns:
-        Queue containing all fetched trades from all markets
+        SwappableQueue containing all fetched trades from all markets
     """
-    # Enqueue all markets
-    market_queue = Queue()
-    for market_id in market_ids:
-        market_queue.put(market_id)
+    config = get_config()
+    coordinator = FetcherCoordinator(config=config)
     
-    print(f"Enqueued {len(market_ids)} markets for processing")
-    print(f"Using {num_workers} workers")
-    print(f"Time range: {start_time} to {end_time}")
-    print("=" * 60)
-    
-    # Fetch trades using multiple workers
-    with TradeFetcher(worker_manager=worker_manager) as fetcher:
-        trade_queue = fetcher.fetch_trades_multithreaded_testing(
-            market_queue=market_queue,
-            start_time=start_time,
-            end_time=end_time,
-            num_workers=num_workers
-        )
-    
-    return trade_queue
+    return coordinator.run_trades(
+        market_ids=market_ids,
+        start_time=start_time,
+        end_time=end_time,
+        num_workers=num_workers
+    )
 
 
 def main():
     """
-    Main function to demonstrate multi-market trade fetching
+    Main function to run the Polymarket fetcher coordinator.
+    
+    Modes:
+        all     - Run all fetchers (markets → trades/prices/leaderboard)
+        trades  - Run only trade fetcher for inactive markets
+        markets - Run only market fetcher
     """
-    # Create centralized worker manager
-    worker_manager = WorkerManager(trade_rate=70, market_rate=100)
+    parser = argparse.ArgumentParser(description="Polymarket Data Fetcher")
+    parser.add_argument(
+        "--mode",
+        choices=["all", "trades", "markets", "prices", "leaderboard"],
+        default="all",
+        help="Fetch mode: all (full pipeline), trades, markets, prices, or leaderboard"
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit number of markets to process (for testing)"
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        help="Timeout in seconds to wait for completion"
+    )
+    args = parser.parse_args()
+    
+    config = get_config()
+    coordinator = FetcherCoordinator(config=config)
     
     # Set time range
-    # i use a time range that covers all of polymarket history
     end_time = datetime.now()
     start_time = datetime(2000, 1, 1)
-    # Query active market IDs from DuckDB silver layer limiting to 5 for testing 
-    print("Querying inactive markets from DuckDB...")
-    market_ids = get_inactive_markets_from_db(end_time)
-    
-    if not market_ids:
-        print("No inactive markets found in database!")
-        return
-    
-    print(f"Found {len(market_ids)} active markets")
-    
-
-    
-    # Convert to Unix timestamps
     start_ts = int(start_time.timestamp())
     end_ts = int(end_time.timestamp())
     
     print("=" * 60)
-    print("Polymarket Multi-Market Trade Fetcher")
+    print("Polymarket Data Fetcher - Coordinator Mode")
     print("=" * 60)
-    print(f"Markets: {len(market_ids)}")
+    print(f"Mode: {args.mode}")
+    print(f"Load Order: {coordinator.load_order}")
     print(f"Start Time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"End Time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
     print()
     
-    # Fetch trades using multiple workers
-    trade_queue = fetch_trades_multimarket(
-        market_ids=market_ids,
-        start_time=start_ts,
-        end_time=end_ts,
-        num_workers=5,
-        worker_manager=worker_manager
-    )
-    
-    # Display sample trades if available
-    if not trade_queue.empty():
-        print("\n" + "=" * 60)
-        print("Sample Trades (first 3):")
-        print("=" * 60)
+    if args.mode == "all":
+        # Run full pipeline: Markets → Trades/Prices/Leaderboard
+        print("Starting full fetch pipeline...")
+        print(f"  Market Workers: {config.workers.market_workers}")
+        print(f"  Trade Workers: {config.workers.trade_workers}")
+        print(f"  Price Workers: {config.workers.price_workers}")
+        print(f"  Leaderboard Workers: {config.workers.leaderboard_workers}")
+        print()
         
-        sample_count = min(3, trade_queue.qsize())
-        for i in range(sample_count):
-            trade = trade_queue.get()
-            print(f"\nTrade {i + 1}:")
-            for key, value in trade.items():
-                print(f"  {key}: {value}")
-    else:
-        print("\nNo trades found for the specified time range.")
+        queues = coordinator.run_all(
+            start_time=start_ts,
+            end_time=end_ts,
+            use_swappable=True
+        )
+        
+        print("All fetchers started. Waiting for completion...")
+        completed = coordinator.wait_for_completion(timeout=args.timeout)
+        
+        if completed:
+            print("\n✓ All fetchers completed successfully")
+        else:
+            print("\n⚠ Timeout reached, some fetchers may still be running")
+        
+        # Print queue sizes
+        print("\nQueue Summary:")
+        for name, queue in queues.items():
+            print(f"  {name}: {queue.qsize()} items")
+    
+    elif args.mode == "trades":
+        # Query inactive markets and fetch trades
+        print("Querying inactive markets from DuckDB...")
+        market_ids = get_inactive_markets_from_db(end_time, limit=args.limit)
+        
+        if not market_ids:
+            print("No inactive markets found in database!")
+            return
+        
+        print(f"Found {len(market_ids)} inactive markets")
+        print(f"Trade Workers: {config.workers.trade_workers}")
+        print()
+        
+        trade_queue = coordinator.run_trades(
+            market_ids=market_ids,
+            start_time=start_ts,
+            end_time=end_ts
+        )
+        
+        print("Trade fetcher started. Waiting for completion...")
+        completed = coordinator.wait_for_completion(timeout=args.timeout)
+        
+        if completed:
+            print(f"\n✓ Fetched {trade_queue.qsize()} trades")
+        else:
+            print(f"\n⚠ Timeout reached, {trade_queue.qsize()} trades fetched so far")
+        
+        # Display sample trades
+        if trade_queue.qsize() > 0:
+            print("\n" + "=" * 60)
+            print("Sample Trades (first 3):")
+            print("=" * 60)
+            
+            sample_count = min(3, trade_queue.qsize())
+            for i in range(sample_count):
+                trade = trade_queue.get()
+                print(f"\nTrade {i + 1}:")
+                for key, value in list(trade.items())[:5]:
+                    print(f"  {key}: {value}")
+    
+    elif args.mode == "markets":
+        print(f"Market Workers: {config.workers.market_workers}")
+        print()
+        
+        market_queue = coordinator.run_markets()
+        
+        print("Market fetcher started. Waiting for completion...")
+        completed = coordinator.wait_for_completion(timeout=args.timeout)
+        
+        if completed:
+            print(f"\n✓ Fetched {market_queue.qsize()} markets")
+        else:
+            print(f"\n⚠ Timeout reached, {market_queue.qsize()} markets fetched so far")
+    
+    elif args.mode == "prices":
+        # Need token IDs - get from markets first or DB
+        print("Querying markets to get token IDs...")
+        # For now, demonstrate with a placeholder
+        print("Price fetching requires token IDs. Use --mode=all for full pipeline.")
+        return
+    
+    elif args.mode == "leaderboard":
+        print("Querying inactive markets from DuckDB...")
+        market_ids = get_inactive_markets_from_db(end_time, limit=args.limit)
+        
+        if not market_ids:
+            print("No inactive markets found in database!")
+            return
+        
+        print(f"Found {len(market_ids)} markets for leaderboard fetch")
+        print(f"Leaderboard Workers: {config.workers.leaderboard_workers}")
+        print()
+        
+        leaderboard_queue = coordinator.run_leaderboard(market_ids=market_ids)
+        
+        print("Leaderboard fetcher started. Waiting for completion...")
+        completed = coordinator.wait_for_completion(timeout=args.timeout)
+        
+        if completed:
+            print(f"\n✓ Fetched {leaderboard_queue.qsize()} leaderboard entries")
+        else:
+            print(f"\n⚠ Timeout reached, {leaderboard_queue.qsize()} entries fetched so far")
     
     # Print rate limit timing statistics
-    worker_manager.print_statistics()
+    print("\n" + "=" * 60)
+    print("Rate Limit Statistics:")
+    print("=" * 60)
+    coordinator.print_statistics()
 
 
 if __name__ == "__main__":
