@@ -72,7 +72,7 @@ class PriceFetcher:
         token_id: str,
         start_ts: int = None,
         end_ts: int = None,
-        resolution: str = "1m",
+        fidelity: int = 1,
         loop_start: float = None
     ) -> List[Dict[str, Any]]:
         """
@@ -110,7 +110,7 @@ class PriceFetcher:
             "market": token_id,
             "startTs": start_ts,
             "endTs": end_ts,
-            "resolution": resolution
+            "fidelity": fidelity
         }
         
         # Acquire rate limit token before making request
@@ -124,11 +124,27 @@ class PriceFetcher:
             response.raise_for_status()
             data = response.json()
             
-            # Add token_id to each record for parquet storage
-            for record in data:
-                record['token_id'] = token_id
+            # Handle different response formats
+            # API may return: {"history": [...]} or a list directly
+            if isinstance(data, dict):
+                # Extract the price history array from the dict
+                history = data.get('history', data.get('prices', data.get('sample_prices', [])))
+            elif isinstance(data, list):
+                history = data
+            else:
+                history = []
             
-            return data
+            # Add token_id to each record for parquet storage
+            result = []
+            for record in history:
+                if isinstance(record, dict):
+                    record['token_id'] = token_id
+                    result.append(record)
+                else:
+                    # If record is a primitive (timestamp, price tuple, etc.), wrap it
+                    result.append({'token_id': token_id, 'value': record})
+            
+            return result
         
         except httpx.HTTPStatusError as e:
             print(f"HTTP error fetching price history: {e.response.status_code} - {e.response.text}")
@@ -148,7 +164,7 @@ class PriceFetcher:
         price_queue: Union[Queue, SwappableQueue],
         start_time: int,
         end_time: int,
-        resolution: str = "1m"
+        fidelity: int = 10000,
     ):
         """
         Worker thread that fetches price history for tokens from the queue.
@@ -180,7 +196,7 @@ class PriceFetcher:
                     token_id=token_id,
                     start_ts=start_time,
                     end_ts=end_time,
-                    resolution=resolution,
+                    fidelity=fidelity,
                     loop_start=loop_start
                 )
                 
@@ -213,7 +229,7 @@ if __name__ == "__main__":
     with PriceFetcher() as fetcher:
         # Example: Fetch price history for a token
         token_id = "12345678901234567890"
-        start_ts = int(datetime(2024, 12, 1).timestamp())
+        start_ts = int(datetime(2024, 12, 29).timestamp())
         end_ts = int(datetime(2024, 12, 30).timestamp())
         
         print(f"Fetching price history for token {token_id[:10]}...")
@@ -223,7 +239,7 @@ if __name__ == "__main__":
             token_id=token_id,
             start_ts=start_ts,
             end_ts=end_ts,
-            resolution="1h"
+            fidelity=1
         )
         
         print(f"\nFetched {len(prices)} price points")

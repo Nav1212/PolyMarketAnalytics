@@ -216,6 +216,7 @@ class LeaderboardFetcher:
     def _worker(
         self,
         worker_id: int,
+        market_queue: Queue,
         output_queue: Union[Queue, SwappableQueue],
         category: Union[LeaderboardCategory, str] = LeaderboardCategory.OVERALL,
         timePeriod: Union[LeaderboardTimePeriod, str] = LeaderboardTimePeriod.DAY,
@@ -226,20 +227,32 @@ class LeaderboardFetcher:
         
         Args:
             worker_id: ID of this worker
+            market_queue: Queue containing market IDs to process
             output_queue: Queue to add fetched leaderboard entries to
             category: Category filter (default OVERALL)
             timePeriod: Time period filter (default DAY)
+            OrderBy: Order by field (default PNL)
         """
         is_swappable = isinstance(output_queue, SwappableQueue)
         
         while True:
             try:
-                print(f"[Leaderboard Worker {worker_id}]")
+                # Get a market from the queue (blocks until available, with timeout)
+                market = market_queue.get(timeout=1.0)
+                
+                # Handle poison pill for graceful shutdown
+                if market is None:
+                    market_queue.task_done()
+                    break
+                
+                display_id = market[:16] + "..." if len(market) > 16 else market
+                print(f"[Leaderboard Worker {worker_id}] Processing market: {display_id}")
                 
                 entries = self.fetch_leaderboard_all(
+                    market=market,
                     category=category,
                     timePeriod=timePeriod, 
-                    orderBy = OrderBy,
+                    orderBy=OrderBy,
                 )
                 
                 if entries:
@@ -250,14 +263,19 @@ class LeaderboardFetcher:
                             output_queue.put(entry)
                     
                     print(f"[Leaderboard Worker {worker_id}] Fetched {len(entries)} entries for {display_id}")
+                
+                # Mark the task as done
+                market_queue.task_done()
                                 
             except Empty:
+                # Queue is empty, continue waiting
                 continue
             
             except Exception as e:
                 print(f"[Leaderboard Worker {worker_id}] Error: {e}")    
     def run_workers(
         self,
+        market_queue: Queue,
         output_queue: Union[Queue, SwappableQueue],
         category: Union[LeaderboardCategory, str] = LeaderboardCategory.OVERALL,
         timePeriod: Union[LeaderboardTimePeriod, str] = LeaderboardTimePeriod.DAY,
@@ -267,6 +285,7 @@ class LeaderboardFetcher:
         Start worker threads to fetch leaderboard data from the market queue.
         
         Args:
+            market_queue: Queue containing market IDs to process (workers pull from this)
             output_queue: Queue to add fetched leaderboard entries to
             category: Category filter (default OVERALL)
             timePeriod: Time period filter (default DAY)
@@ -282,7 +301,7 @@ class LeaderboardFetcher:
         for i in range(num_workers):
             t = threading.Thread(
                 target=self._worker,
-                args=(i, output_queue, category, timePeriod),
+                args=(i, market_queue, output_queue, category, timePeriod),
                 daemon=True
             )
             t.start()

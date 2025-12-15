@@ -186,6 +186,7 @@ class FetcherCoordinator:
         
         # LeaderboardFetcher - has its own run_workers
         leaderboard_threads = self._leaderboard_fetcher.run_workers(
+            market_queue=self._leaderboard_market_queue,
             output_queue=self._leaderboard_output_queue,
             num_workers=leaderboard_workers
         )
