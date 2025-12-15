@@ -31,7 +31,8 @@ class PriceFetcher:
         self,
         timeout: float = None,
         worker_manager: WorkerManager = None,
-        config: Config = None
+        config: Config = None,
+        market_queue: Queue = None,
     ):
         """
         Initialize the price fetcher.
@@ -40,8 +41,10 @@ class PriceFetcher:
             timeout: Request timeout in seconds (uses config if None)
             worker_manager: WorkerManager instance for rate limiting (uses default if None)
             config: Config object (uses global config if None)
+            market_queue: Queue containing market/token IDs to process
         """
         self._config = config or get_config()
+        self._market_queue = market_queue
         
         if timeout is None:
             timeout = self._config.api.timeout
@@ -144,7 +147,6 @@ class PriceFetcher:
     def _worker(
         self,
         worker_id: int,
-        token_queue: Queue,
         price_queue: Union[Queue, SwappableQueue],
         start_time: int,
         end_time: int,
@@ -155,7 +157,6 @@ class PriceFetcher:
         
         Args:
             worker_id: ID of this worker
-            token_queue: Queue containing token IDs to process
             price_queue: Queue to add fetched prices to (Queue or SwappableQueue)
             start_time: Start timestamp in Unix seconds
             end_time: End timestamp in Unix seconds
@@ -166,9 +167,9 @@ class PriceFetcher:
         while True:
             try:
                 # Get token from queue (non-blocking with timeout)
-                token_id = token_queue.get(timeout=1)
+                token_id = self._market_queue.get(timeout=1)
                 if token_id is None:
-                    token_queue.task_done()
+                    self._market_queue.task_done()
                     if not is_swappable:
                         price_queue.put(None)
                     return
@@ -193,7 +194,7 @@ class PriceFetcher:
                     
                     print(f"Worker {worker_id}: Fetched {len(prices)} prices for token {token_id[:10] if len(token_id) > 10 else token_id}")
                 
-                token_queue.task_done()
+                self._market_queue.task_done()
                 
             except Empty:
                 continue
@@ -201,7 +202,7 @@ class PriceFetcher:
             except Exception as e:
                 print(f"Worker {worker_id}: Error - {e}")
                 if token_id is not None:
-                    token_queue.task_done()
+                    self._market_queue.task_done()
                 if not is_swappable:
                     price_queue.put(None)
                 return

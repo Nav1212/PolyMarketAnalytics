@@ -112,18 +112,17 @@ class FetcherCoordinator:
         
         # TradeFetcher consumes from trade_market_queue
         self._trade_fetcher = TradeFetcher(
-            market_queue=self._market_output_queue
+            market_queue=self._trade_market_queue
         )
         
         # PriceFetcher consumes from price_token_queue
         self._price_fetcher = PriceFetcher(
-            output_queue=self._price_output_queue
+            market_queue=self._price_token_queue
         )
         
         # LeaderboardFetcher consumes from leaderboard_market_queue
         self._leaderboard_fetcher = LeaderboardFetcher(
-            input_queue=self._leaderboard_market_queue,
-            output_queue=self._leaderboard_output_queue
+            market_queue=self._leaderboard_market_queue
         )
     
     def run_all(
@@ -170,7 +169,7 @@ class FetcherCoordinator:
         for i in range(trade_workers):
             t = Thread(
                 target=self._trade_fetcher._worker,
-                args=(i, self._trade_market_queue, self._trade_output_queue, start_time, end_time),
+                args=(i, self._trade_output_queue),
                 name=f"TradeFetcher-Worker-{i}"
             )
             t.start()
@@ -180,20 +179,18 @@ class FetcherCoordinator:
         for i in range(price_workers):
             t = Thread(
                 target=self._price_fetcher._worker,
-                args=(i, self._price_token_queue, self._price_output_queue),
+                args=(i, self._price_output_queue, start_time, end_time),
                 name=f"PriceFetcher-Worker-{i}"
             )
             t.start()
             self._worker_threads.append(t)
         
         # LeaderboardFetcher - has its own run_workers
-        leaderboard_thread = Thread(
-            target=self._leaderboard_fetcher.run_workers,
-            kwargs={"num_workers": leaderboard_workers},
-            name="LeaderboardFetcher-Coordinator"
+        leaderboard_threads = self._leaderboard_fetcher.run_workers(
+            output_queue=self._leaderboard_output_queue,
+            num_workers=leaderboard_workers
         )
-        leaderboard_thread.start()
-        self._worker_threads.append(leaderboard_thread)
+        self._worker_threads.extend(leaderboard_threads)
         
         return {
             "market_queue": self._market_output_queue,
@@ -241,12 +238,12 @@ class FetcherCoordinator:
             output_queue = Queue()
         
         # Create fetcher and start workers
-        self._trade_fetcher = TradeFetcher(output_queue=output_queue)
+        self._trade_fetcher = TradeFetcher(market_queue=input_queue)
         
         for i in range(num_workers):
             t = Thread(
                 target=self._trade_fetcher._worker,
-                args=(i, input_queue, output_queue, start_time, end_time),
+                args=(i, output_queue),
                 name=f"TradeFetcher-Worker-{i}"
             )
             t.start()
@@ -323,12 +320,12 @@ class FetcherCoordinator:
             output_queue = Queue()
         
         # Create fetcher and start workers
-        self._price_fetcher = PriceFetcher(output_queue=output_queue)
+        self._price_fetcher = PriceFetcher(market_queue=input_queue)
         
         for i in range(num_workers):
             t = Thread(
                 target=self._price_fetcher._worker,
-                args=(i, input_queue, output_queue),
+                args=(i, output_queue),
                 name=f"PriceFetcher-Worker-{i}"
             )
             t.start()
@@ -372,17 +369,14 @@ class FetcherCoordinator:
         
         # Create fetcher and start workers
         self._leaderboard_fetcher = LeaderboardFetcher(
-            input_queue=input_queue,
-            output_queue=output_queue
+            market_queue=input_queue
         )
         
-        leaderboard_thread = Thread(
-            target=self._leaderboard_fetcher.run_workers,
-            kwargs={"num_workers": num_workers},
-            name="LeaderboardFetcher-Coordinator"
+        leaderboard_threads = self._leaderboard_fetcher.run_workers(
+            output_queue=output_queue,
+            num_workers=num_workers
         )
-        leaderboard_thread.start()
-        self._worker_threads.append(leaderboard_thread)
+        self._worker_threads.extend(leaderboard_threads)
         
         return output_queue
     
