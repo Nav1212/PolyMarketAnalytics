@@ -198,6 +198,9 @@ class PriceFetcher:
         """
         is_swappable = isinstance(price_queue, SwappableQueue)
         
+        # Assert queue is not None - caller must provide it
+        assert self._market_queue is not None, "market_queue must be provided for worker"
+        
         while True:
             try:
                 # Get token from queue (non-blocking with timeout)

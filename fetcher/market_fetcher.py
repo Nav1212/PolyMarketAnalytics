@@ -175,7 +175,7 @@ class MarketFetcher:
             self._manager.acquire_market(loop_start)
             
             response = self.client.get_markets(next_cursor=next_cursor) if next_cursor else self.client.get_markets()
-            data = response
+            data: Dict[str, Any] = response  # type: ignore[assignment]
             next_cursor = data.get("next_cursor")
             batch = data.get("data", [])
             
@@ -221,7 +221,7 @@ class MarketFetcher:
             self._manager.acquire_market(loop_start)
             
             try:
-                response = self.client.get_markets(next_cursor=next_cursor) if next_cursor else self.client.get_markets()
+                response: Dict[str, Any] = self.client.get_markets(next_cursor=next_cursor) if next_cursor else self.client.get_markets()  # type: ignore[assignment]
                 batch = response.get("data", [])
                 next_cursor = response.get("next_cursor")
                 

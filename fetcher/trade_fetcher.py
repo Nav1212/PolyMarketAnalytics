@@ -187,6 +187,9 @@ class TradeFetcher:
         # Determine which put method to use based on queue type
         is_swappable = isinstance(trade_queue, SwappableQueue)
         
+        # Assert queue is not None - caller must provide it
+        assert self._market_queue is not None, "market_queue must be provided for worker"
+        
         while True:
             try:
                 # Get market from queue (non-blocking with timeout)

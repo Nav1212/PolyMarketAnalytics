@@ -72,7 +72,7 @@ class WorkerManager:
         price_rate: int = 100,
         leaderboard_rate: int = 70,
         window_seconds: float = 10.0,
-        config: "Config" = None
+        config: Optional["Config"] = None
     ):
         """
         Args:
@@ -155,7 +155,7 @@ class WorkerManager:
             elapsed = time.time() - loop_start
             self._leaderboard_hit_times.append(elapsed)
     
-    def _compute_stats(self, times: deque) -> dict:
+    def _compute_stats(self, times: deque) -> Optional[dict]:
         """Compute average, median, and fastest from a deque of times."""
         if not times:
             return None
