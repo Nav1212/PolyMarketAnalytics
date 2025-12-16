@@ -13,6 +13,7 @@ import time
 from swappable_queue import SwappableQueue
 from worker_manager import WorkerManager, get_worker_manager
 from config import get_config, Config
+from cursor_manager import CursorManager, get_cursor_manager
 
 
 class PriceFetcher:
@@ -26,6 +27,7 @@ class PriceFetcher:
         worker_manager: Optional[WorkerManager] = None,
         config: Optional[Config] = None,
         market_queue: Optional[Queue] = None,
+        cursor_manager: Optional[CursorManager] = None,
     ):
         """
         Initialize the price fetcher.
@@ -34,9 +36,11 @@ class PriceFetcher:
             timeout: Request timeout in seconds (uses config if None)
             worker_manager: WorkerManager instance for rate limiting (uses default if None)
             config: Config object (uses global config if None)
+            cursor_manager: CursorManager for progress persistence (uses global if None)
         """
         self._config = config or get_config()
         self._market_queue = market_queue
+        self._cursor_manager = cursor_manager or get_cursor_manager()
         if timeout is None:
             timeout = self._config.api.timeout
         
@@ -222,6 +226,13 @@ class PriceFetcher:
                 # Use market start time if available, otherwise use provided start_time
                 effective_start = market_start_ts if market_start_ts is not None else start_time
                 
+                # Update cursor with current progress
+                self._cursor_manager.update_price_cursor(
+                    token_id=token_id,
+                    start_ts=effective_start,
+                    end_ts=end_time
+                )
+                
                 print(f"Worker {worker_id}: Processing token {token_id[:10] if len(token_id) > 10 else token_id}...")
                 
                 loop_start = time.time()
@@ -241,6 +252,17 @@ class PriceFetcher:
                             price_queue.put(price)
                     
                     print(f"Worker {worker_id}: Fetched {len(prices)} prices for token {token_id[:10] if len(token_id) > 10 else token_id}")
+                
+                # Token completed - remove from pending list
+                current_cursor = self._cursor_manager.get_price_cursor()
+                pending = [t for t in current_cursor.pending_tokens 
+                          if (t[0] if isinstance(t, tuple) else t) != token_id]
+                self._cursor_manager.update_price_cursor(
+                    token_id="",  # Clear current token
+                    start_ts=start_time or 0,
+                    end_ts=end_time or 0,
+                    pending_tokens=pending
+                )
                 
                 self._market_queue .task_done()
                 

@@ -13,6 +13,7 @@ import time
 from swappable_queue import SwappableQueue
 from worker_manager import WorkerManager, get_worker_manager
 from config import get_config, Config
+from cursor_manager import CursorManager, get_cursor_manager
 
 
 class LeaderboardCategory(str, Enum):
@@ -53,6 +54,7 @@ class LeaderboardFetcher:
         timeout: Optional[float] = None,
         worker_manager: Optional[WorkerManager] = None,
         config: Optional[Config] = None,
+        cursor_manager: Optional[CursorManager] = None,
     ):
         """
         Initialize the leaderboard fetcher.
@@ -61,9 +63,10 @@ class LeaderboardFetcher:
             timeout: Request timeout in seconds (uses config if None)
             worker_manager: WorkerManager instance for rate limiting (uses default if None)
             config: Config object (uses global config if None)
-            market_queue: Queue containing market IDs to process
+            cursor_manager: CursorManager for progress persistence (uses global if None)
         """
         self._config = config or get_config()
+        self._cursor_manager = cursor_manager or get_cursor_manager()
         
         if timeout is None:
             timeout = self._config.api.timeout
@@ -235,6 +238,10 @@ class LeaderboardFetcher:
         """
         is_swappable = isinstance(output_queue, SwappableQueue)
         
+        # Convert to string for cursor storage
+        category_str = category.value if isinstance(category, LeaderboardCategory) else category
+        time_period_str = timePeriod.value if isinstance(timePeriod, LeaderboardTimePeriod) else timePeriod
+        
         while True:
             try:
                 # Get a market from the queue (blocks until available, with timeout)
@@ -264,6 +271,15 @@ class LeaderboardFetcher:
                     
                     print(f"[Leaderboard Worker {worker_id}] Fetched {len(entries)} entries for {display_id}")
                 
+                # Market completed - remove from pending list
+                current_cursor = self._cursor_manager.get_leaderboard_cursor()
+                pending = [m for m in current_cursor.pending_markets if m != market]
+                self._cursor_manager.update_leaderboard_cursor(
+                    category=category_str,
+                    time_period=time_period_str,
+                    pending_markets=pending
+                )
+                
                 # Mark the task as done
                 market_queue.task_done()
                                 
@@ -272,7 +288,8 @@ class LeaderboardFetcher:
                 continue
             
             except Exception as e:
-                print(f"[Leaderboard Worker {worker_id}] Error: {e}")    
+                print(f"[Leaderboard Worker {worker_id}] Error: {e}")
+    
     def run_workers(
         self,
         market_queue: Queue,

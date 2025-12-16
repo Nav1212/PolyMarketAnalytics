@@ -141,21 +141,21 @@ def load_config(config_path: Optional[str] = None) -> Config:
     global _config
     
     if config_path is None:
-        config_path = Path(__file__).parent / "config.json"
+        resolved_path = Path(__file__).parent / "config.json"
     else:
-        config_path = Path(config_path)
+        resolved_path = Path(config_path)
     
-    if config_path.exists():
+    if resolved_path.exists():
         try:
-            with open(config_path, 'r') as f:
+            with open(resolved_path, 'r') as f:
                 data = json.load(f)
             _config = Config.from_dict(data)
-            print(f"[Config] Loaded configuration from {config_path}")
+            print(f"[Config] Loaded configuration from {resolved_path}")
         except Exception as e:
-            print(f"[Config] Error loading {config_path}: {e}. Using defaults.")
+            print(f"[Config] Error loading {resolved_path}: {e}. Using defaults.")
             _config = Config()
     else:
-        print(f"[Config] {config_path} not found. Using defaults.")
+        print(f"[Config] {resolved_path} not found. Using defaults.")
         _config = Config()
     
     return _config
@@ -194,11 +194,11 @@ def save_config(config: Config, config_path: Optional[str] = None) -> None:
         config_path: Path to save to. If None, saves to default location.
     """
     if config_path is None:
-        config_path = Path(__file__).parent / "config.json"
+        resolved_path = Path(__file__).parent / "config.json"
     else:
-        config_path = Path(config_path)
+        resolved_path = Path(config_path)
     
-    with open(config_path, 'w') as f:
+    with open(resolved_path, 'w') as f:
         json.dump(config.to_dict(), f, indent=4)
     
-    print(f"[Config] Saved configuration to {config_path}")
+    print(f"[Config] Saved configuration to {resolved_path}")

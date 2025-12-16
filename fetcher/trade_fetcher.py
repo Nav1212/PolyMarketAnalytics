@@ -26,6 +26,7 @@ from parquet_persister import (
 )
 from worker_manager import WorkerManager, get_worker_manager
 from config import get_config, Config
+from cursor_manager import CursorManager, get_cursor_manager
 
 
 class TradeFetcher:
@@ -39,6 +40,7 @@ class TradeFetcher:
         worker_manager: Optional[WorkerManager] = None,
         config: Optional[Config] = None,
         market_queue: Optional[Queue] = None,
+        cursor_manager: Optional[CursorManager] = None,
     ):
         """
         Initialize the trade fetcher.
@@ -47,9 +49,11 @@ class TradeFetcher:
             timeout: Request timeout in seconds (uses config if None)
             worker_manager: WorkerManager instance for rate limiting (uses default if None)
             config: Config object (uses global config if None)
+            cursor_manager: CursorManager for progress persistence (uses global if None)
         """
         self._config = config or get_config()
         self._market_queue = market_queue
+        self._cursor_manager = cursor_manager or get_cursor_manager()
         if timeout is None:
             timeout = self._config.api.timeout
         
@@ -205,11 +209,29 @@ class TradeFetcher:
                     extra={"worker_id": worker_id, "market": market[:16]}
                 )
                 
+                # Check if we should resume from a cursor for this market
+                trade_cursor = self._cursor_manager.get_trade_cursor()
+                if trade_cursor.market == market and trade_cursor.offset > 0:
+                    offset = trade_cursor.offset
+                    filteramount = trade_cursor.filter_amount
+                    logger.info(
+                        f"Worker {worker_id}: Resuming market {market[:16]} from offset={offset}, filter={filteramount}",
+                        extra={"worker_id": worker_id, "market": market[:16]}
+                    )
+                else:
+                    offset = 0
+                    filteramount = 0
+                
                 # Fetch all trades for this market
                 trade_count = 0
-                offset =0 
-                filteramount = 0 
                 while True:
+                    # Update cursor with current progress
+                    self._cursor_manager.update_trade_cursor(
+                        market=market,
+                        offset=offset,
+                        filter_amount=filteramount
+                    )
+                    
                     loop_start = time.time()
                     trades = self.fetch_trades(
                         market=market,
@@ -250,6 +272,17 @@ class TradeFetcher:
                         extra={"worker_id": worker_id, "trade_count": trade_count}
                     )
                     # Move to the next batch (start after the last trade)
+                
+                # Market completed - remove from pending list
+                current_cursor = self._cursor_manager.get_trade_cursor()
+                pending = [m for m in current_cursor.pending_markets if m != market]
+                self._cursor_manager.update_trade_cursor(
+                    market="",  # Clear current market
+                    offset=0,
+                    filter_amount=0,
+                    pending_markets=pending
+                )
+                
                 logger.info(
                     f"Worker {worker_id}: Finished market {market[:16]}, total trades: {trade_count}",
                     extra={"worker_id": worker_id, "market": market[:16], "trade_count": trade_count}
