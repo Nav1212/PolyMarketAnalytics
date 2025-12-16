@@ -157,15 +157,30 @@ class PriceFetcher:
             else:
                 history = []
             
-            # Add token_id to each record for parquet storage
+            # Normalize field names to match PRICE_SCHEMA: timestamp, token_id, price
             result = []
             for record in history:
                 if isinstance(record, dict):
-                    record['token_id'] = token_id
-                    result.append(record)
-                else:
-                    # If record is a primitive (timestamp, price tuple, etc.), wrap it
-                    result.append({'token_id': token_id, 'value': record})
+                    # Handle different API response formats:
+                    # - {t: timestamp, p: price}
+                    # - {timestamp: ..., price: ...}
+                    # - {ts: ..., price: ...}
+                    normalized = {
+                        'token_id': token_id,
+                        'timestamp': record.get('t') or record.get('timestamp') or record.get('ts') or 0,
+                        'price': record.get('p') or record.get('price') or 0.0
+                    }
+                    # Ensure timestamp is int and price is float
+                    normalized['timestamp'] = int(normalized['timestamp']) if normalized['timestamp'] else 0
+                    normalized['price'] = float(normalized['price']) if normalized['price'] else 0.0
+                    result.append(normalized)
+                elif isinstance(record, (list, tuple)) and len(record) >= 2:
+                    # Handle [timestamp, price] tuple format
+                    result.append({
+                        'token_id': token_id,
+                        'timestamp': int(record[0]) if record[0] else 0,
+                        'price': float(record[1]) if record[1] else 0.0
+                    })
             
             return result
         

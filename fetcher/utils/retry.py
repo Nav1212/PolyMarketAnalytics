@@ -11,8 +11,8 @@ import time
 from typing import Callable, Tuple, Type, Optional, Union, Any
 import httpx
 
-from fetcher.utils.logging_config import get_logger
-from fetcher.utils.exceptions import (
+from utils.logging_config import get_logger
+from utils.exceptions import (
     PolymarketAPIError,
     RateLimitExceededError,
     NetworkTimeoutError,

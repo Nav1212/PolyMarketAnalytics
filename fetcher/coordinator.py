@@ -22,6 +22,8 @@ from queue import Queue
 from threading import Thread
 from typing import Optional, List, Dict, Any, Union
 
+import time
+
 from config import Config, get_config
 from worker_manager import WorkerManager, get_worker_manager, set_worker_manager
 from swappable_queue import SwappableQueue
@@ -29,6 +31,14 @@ from market_fetcher import MarketFetcher
 from trade_fetcher import TradeFetcher
 from price_fetcher import PriceFetcher
 from leaderboard_fetcher import LeaderboardFetcher
+from parquet_persister import (
+    ParquetPersister,
+    create_market_persisted_queue,
+    create_market_token_persisted_queue,
+    create_trade_persisted_queue,
+    create_price_persisted_queue,
+    DataType
+)
 from cursor_manager import (
     CursorManager, 
     get_cursor_manager, 
@@ -95,6 +105,7 @@ class FetcherCoordinator:
         
         # Output queues
         self._market_output_queue: Optional[Union[Queue, SwappableQueue]] = None
+        self._market_token_output_queue: Optional[Union[Queue, SwappableQueue]] = None
         self._trade_output_queue: Optional[Union[Queue, SwappableQueue]] = None
         self._price_output_queue: Optional[Union[Queue, SwappableQueue]] = None
         self._leaderboard_output_queue: Optional[Union[Queue, SwappableQueue]] = None
@@ -105,24 +116,57 @@ class FetcherCoordinator:
         self._price_fetcher: Optional[PriceFetcher] = None
         self._leaderboard_fetcher: Optional[LeaderboardFetcher] = None
         
+        # Parquet persisters
+        self._market_persister: Optional[ParquetPersister] = None
+        self._market_token_persister: Optional[ParquetPersister] = None
+        self._trade_persister: Optional[ParquetPersister] = None
+        self._price_persister: Optional[ParquetPersister] = None
+        
         # Worker threads
         self._worker_threads: List[Thread] = []
     
     def _create_queues(self, use_swappable: bool = True) -> None:
-        """Create all inter-fetcher and output queues."""
+        """Create all inter-fetcher and output queues with parquet persistence."""
         # Inter-fetcher queues (regular Queue for signaling)
         self._trade_market_queue = Queue()
         self._price_token_queue = Queue()
         self._leaderboard_market_queue = Queue()
         
-        # Output queues (SwappableQueue for Parquet persistence)
+        # Output queues with Parquet persistence
         if use_swappable:
-            self._market_output_queue = SwappableQueue()
-            self._trade_output_queue = SwappableQueue()
-            self._price_output_queue = SwappableQueue()
+            # Markets: persisted to parquet
+            self._market_output_queue, self._market_persister = create_market_persisted_queue(
+                threshold=self._config.queues.market_threshold,
+                output_dir=self._config.output_dirs.market,
+                auto_start=True
+            )
+            
+            # Market Tokens: persisted to parquet (extracted from markets)
+            self._market_token_output_queue, self._market_token_persister = create_market_token_persisted_queue(
+                threshold=self._config.queues.market_token_threshold,
+                output_dir=self._config.output_dirs.market_token,
+                auto_start=True
+            )
+            
+            # Trades: persisted to parquet
+            self._trade_output_queue, self._trade_persister = create_trade_persisted_queue(
+                threshold=self._config.queues.trade_threshold,
+                output_dir=self._config.output_dirs.trade,
+                auto_start=True
+            )
+            
+            # Prices: persisted to parquet
+            self._price_output_queue, self._price_persister = create_price_persisted_queue(
+                threshold=self._config.queues.price_threshold,
+                output_dir=self._config.output_dirs.price,
+                auto_start=True
+            )
+            
+            # Leaderboard: no parquet persistence (just queue)
             self._leaderboard_output_queue = SwappableQueue()
         else:
             self._market_output_queue = Queue()
+            self._market_token_output_queue = Queue()
             self._trade_output_queue = Queue()
             self._price_output_queue = Queue()
             self._leaderboard_output_queue = Queue()
@@ -132,6 +176,7 @@ class FetcherCoordinator:
         # MarketFetcher feeds downstream queues
         self._market_fetcher = MarketFetcher(
             output_queue=self._market_output_queue,
+            market_token_queue=self._market_token_output_queue,
             trade_market_queue=self._trade_market_queue,
             price_token_queue=self._price_token_queue,
             leaderboard_market_queue=self._leaderboard_market_queue
@@ -155,22 +200,25 @@ class FetcherCoordinator:
         self,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
-        use_swappable: bool = True
+        use_swappable: bool = True,
+        market_warmup_delay: float = 0.5
     ) -> Dict[str, Any]:
         """
-        Run all fetchers in proper load order.
+        Run all fetchers in parallel.
         
-        Load Order:
-            1. MarketFetcher starts first
-            2. TradeFetcher, PriceFetcher, LeaderboardFetcher start after markets begin flowing
+        All fetchers start simultaneously with MarketFetcher given a small head start
+        to seed the queues with initial entries. Downstream fetchers will block on
+        their queues until market data flows in.
         
         Args:
             start_time: Start timestamp for trade fetching
             end_time: End timestamp for trade fetching
             use_swappable: Use SwappableQueue for outputs (for Parquet persistence)
+            market_warmup_delay: Seconds to wait after starting MarketFetcher before
+                                 starting downstream fetchers (default 0.5s)
         
         Returns:
-            Dict containing all output queues
+            Dict containing all output queues and persisters
         """
         self._create_queues(use_swappable=use_swappable)
         self._create_fetchers()
@@ -191,7 +239,10 @@ class FetcherCoordinator:
         price_workers = self._config.workers.price
         leaderboard_workers = self._config.workers.leaderboard
         
-        # Load Order 1: Start MarketFetcher
+        print(f"Starting parallel fetch pipeline...")
+        print(f"  MarketFetcher warming up for {market_warmup_delay}s before downstream fetchers...")
+        
+        # Start MarketFetcher first to seed the queues
         market_thread = Thread(
             target=self._market_fetcher.run_workers,
             kwargs={"num_workers": market_workers},
@@ -200,7 +251,10 @@ class FetcherCoordinator:
         market_thread.start()
         self._worker_threads.append(market_thread)
         
-        # Load Order 2: Start downstream fetchers (parallel)
+        # Brief delay to let MarketFetcher add initial entries to downstream queues
+        time.sleep(market_warmup_delay)
+        
+        # Start all downstream fetchers in parallel (they consume from queues as items arrive)
         # TradeFetcher workers
         for i in range(trade_workers):
             t = Thread(
@@ -229,11 +283,20 @@ class FetcherCoordinator:
         )
         self._worker_threads.extend(leaderboard_threads)
         
+        print(f"All fetchers started in parallel mode:")
+        print(f"  - MarketFetcher: {market_workers} workers → persisting to {self._config.output_dirs.market}")
+        print(f"  - TradeFetcher: {trade_workers} workers → persisting to {self._config.output_dirs.trade}")
+        print(f"  - PriceFetcher: {price_workers} workers → persisting to {self._config.output_dirs.price}")
+        print(f"  - LeaderboardFetcher: {leaderboard_workers} workers")
+        
         return {
             "market_queue": self._market_output_queue,
             "trade_queue": self._trade_output_queue,
             "price_queue": self._price_output_queue,
-            "leaderboard_queue": self._leaderboard_output_queue
+            "leaderboard_queue": self._leaderboard_output_queue,
+            "market_persister": self._market_persister,
+            "trade_persister": self._trade_persister,
+            "price_persister": self._price_persister
         }
     
     def run_trades(
@@ -500,7 +563,7 @@ class FetcherCoordinator:
     
     def wait_for_completion(self, timeout: Optional[float] = None) -> bool:
         """
-        Wait for all worker threads to complete.
+        Wait for all worker threads to complete and flush persisters.
         
         Args:
             timeout: Maximum time to wait (None for infinite)
@@ -514,9 +577,14 @@ class FetcherCoordinator:
                 if thread.is_alive():
                     # Timeout occurred, save cursors for resume
                     self._cursor_manager.save_cursors()
+                    self._stop_persisters()
                     return False
             
-            # All threads completed successfully, clear cursors
+            # All threads completed successfully
+            # Stop persisters to flush remaining data
+            self._stop_persisters()
+            
+            # Clear cursors since we completed successfully
             self._cursor_manager.clear_trade_cursor()
             self._cursor_manager.clear_price_cursor()
             self._cursor_manager.clear_leaderboard_cursor()
@@ -526,9 +594,25 @@ class FetcherCoordinator:
             
         except KeyboardInterrupt:
             # User interrupted, save cursors for resume
-            print("\nInterrupted! Saving cursors...")
+            print("\nInterrupted! Saving cursors and flushing data...")
             self._cursor_manager.save_cursors()
+            self._stop_persisters()
             raise
+    
+    def _stop_persisters(self) -> None:
+        """Stop all parquet persisters and flush remaining data."""
+        if self._market_persister:
+            self._market_persister.stop()
+            print(f"  Market persister: {self._market_persister.stats}")
+        if self._market_token_persister:
+            self._market_token_persister.stop()
+            print(f"  Market token persister: {self._market_token_persister.stats}")
+        if self._trade_persister:
+            self._trade_persister.stop()
+            print(f"  Trade persister: {self._trade_persister.stats}")
+        if self._price_persister:
+            self._price_persister.stop()
+            print(f"  Price persister: {self._price_persister.stats}")
     
     def signal_shutdown(self) -> None:
         """Signal all fetchers to shut down by sending sentinel values."""

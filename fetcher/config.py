@@ -29,6 +29,15 @@ class QueuesConfig:
 
 
 @dataclass
+class BatchSizesConfig:
+    """Batch size configuration (aliases queue thresholds for persistence)."""
+    trade: int = 10000
+    market: int = 1000
+    market_token: int = 5000
+    price: int = 10000
+
+
+@dataclass
 class OutputDirsConfig:
     """Output directory configuration."""
     trade: str = "data/trades"
@@ -71,6 +80,16 @@ class Config:
     api: ApiConfig = field(default_factory=ApiConfig)
     workers: WorkersConfig = field(default_factory=WorkersConfig)
     cursors: CursorsConfig = field(default_factory=CursorsConfig)
+    
+    @property
+    def batch_sizes(self) -> BatchSizesConfig:
+        """Return batch sizes derived from queue thresholds."""
+        return BatchSizesConfig(
+            trade=self.queues.trade_threshold,
+            market=self.queues.market_threshold,
+            market_token=self.queues.market_token_threshold,
+            price=self.queues.price_threshold
+        )
     
     @classmethod
     def from_dict(cls, data: dict) -> "Config":

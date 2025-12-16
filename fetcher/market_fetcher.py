@@ -31,7 +31,8 @@ class MarketFetcher:
         trade_market_queue: Optional[Queue] = None,
         price_token_queue: Optional[Queue] = None,
         leaderboard_market_queue: Optional[Queue] = None,
-        output_queue: Optional[Union[Queue, SwappableQueue]] = None
+        output_queue: Optional[Union[Queue, SwappableQueue]] = None,
+        market_token_queue: Optional[Union[Queue, SwappableQueue]] = None
     ):
         """
         Initialize the market fetcher.
@@ -44,6 +45,7 @@ class MarketFetcher:
             price_token_queue: Queue to write token IDs for price fetcher
             leaderboard_market_queue: Queue to write market condition IDs for leaderboard fetcher
             output_queue: Queue to write market data to (used by coordinator)
+            market_token_queue: Queue to write extracted token data for parquet persistence
         """
         self._config = config or get_config()
         self.client = ClobClient(
@@ -55,6 +57,7 @@ class MarketFetcher:
         self._price_token_queue = price_token_queue
         self._leaderboard_market_queue = leaderboard_market_queue
         self._output_queue = output_queue
+        self._market_token_queue = market_token_queue
     
     def close(self):
         """Close resources"""
@@ -68,11 +71,14 @@ class MarketFetcher:
     
     def _enqueue_markets_for_fetchers(self, markets: List[Dict[str, Any]]) -> None:
         """
-        Write market condition IDs and token IDs to the trade, price, and leaderboard queues.
+        Write market condition IDs and token IDs to the trade, price, leaderboard, and token queues.
         
         Args:
             markets: List of market dictionaries from API
         """
+        is_token_queue_swappable = isinstance(self._market_token_queue, SwappableQueue)
+        token_batch = []  # Collect tokens for batch insert
+        
         for market in markets:
             condition_id = market.get("condition_id")
             
@@ -84,25 +90,45 @@ class MarketFetcher:
             if self._leaderboard_market_queue is not None and condition_id:
                 self._leaderboard_market_queue.put(condition_id)
             
-            # Write token IDs to price fetcher queue (with market start time)
-            if self._price_token_queue is not None:
-                tokens = market.get("tokens", [])
-                # Get market start time from game_start_time or end_date_iso
-                market_start = market.get("game_start_time") or market.get("end_date_iso")
-                market_start_ts = None
-                if market_start:
-                    try:
-                        from datetime import datetime
-                        # Parse ISO format datetime
-                        dt = datetime.fromisoformat(market_start.replace('Z', '+00:00'))
-                        market_start_ts = int(dt.timestamp())
-                    except (ValueError, AttributeError):
-                        pass
-                for token in tokens:
-                    token_id = token.get("token_id")
-                    if token_id:
-                        # Put tuple of (token_id, market_start_timestamp)
+            # Extract tokens for parquet persistence and price fetcher
+            tokens = market.get("tokens", [])
+            # Get market start time from game_start_time or end_date_iso
+            market_start = market.get("game_start_time") or market.get("end_date_iso")
+            market_start_ts = None
+            if market_start:
+                try:
+                    # Parse ISO format datetime
+                    dt = datetime.fromisoformat(market_start.replace('Z', '+00:00'))
+                    market_start_ts = int(dt.timestamp())
+                except (ValueError, AttributeError):
+                    pass
+            
+            for token in tokens:
+                token_id = token.get("token_id")
+                if token_id:
+                    # Write to price fetcher queue
+                    if self._price_token_queue is not None:
                         self._price_token_queue.put((token_id, market_start_ts))
+                    
+                    # Extract token data for parquet (matches MARKET_TOKEN_SCHEMA)
+                    if self._market_token_queue is not None:
+                        token_record = {
+                            'condition_Id': condition_id,
+                            'token_id': token_id,
+                            'price': float(token.get('price', 0.0)) if token.get('price') else 0.0,
+                            'winner': bool(token.get('winner', False))
+                        }
+                        token_batch.append(token_record)
+        
+        # Write tokens to queue
+        if self._market_token_queue is not None and token_batch:
+            if is_token_queue_swappable:
+                # Type is SwappableQueue, use put_many
+                swappable_queue: SwappableQueue = self._market_token_queue  # type: ignore
+                swappable_queue.put_many(token_batch)
+            else:
+                for token_record in token_batch:
+                    self._market_token_queue.put(token_record)
     
     @staticmethod
     def int_to_base64_urlsafe(n: int) -> str:
@@ -245,7 +271,30 @@ class MarketFetcher:
                 print(f"[Market Worker {worker_id}] Error: {e}")
                 break
         
+        # Send sentinel values to downstream fetchers to signal completion
+        self._send_shutdown_signals()
+        
         print(f"[Market Worker {worker_id}] Finished, total markets: {total_markets}")
+    
+    def _send_shutdown_signals(self) -> None:
+        """Send None sentinels to downstream queues to signal completion."""
+        from config import get_config
+        config = get_config()
+        
+        # Send sentinel to trade queue for each trade worker
+        if self._trade_market_queue is not None:
+            for _ in range(config.workers.trade):
+                self._trade_market_queue.put(None)
+        
+        # Send sentinel to price queue for each price worker
+        if self._price_token_queue is not None:
+            for _ in range(config.workers.price):
+                self._price_token_queue.put(None)
+        
+        # Send sentinel to leaderboard queue for each leaderboard worker
+        if self._leaderboard_market_queue is not None:
+            for _ in range(config.workers.leaderboard):
+                self._leaderboard_market_queue.put(None)
     
     def run_workers(
         self,
