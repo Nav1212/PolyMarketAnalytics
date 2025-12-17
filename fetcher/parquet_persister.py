@@ -30,6 +30,7 @@ class DataType(Enum):
     MARKET = "market"
     MARKET_TOKEN = "market_token"
     PRICE = "price"
+    LEADERBOARD = "leaderboard"
 
 
 # =============================================================================
@@ -82,6 +83,17 @@ PRICE_SCHEMA = pa.schema([
     ('timestamp', pa.int64()),
     ('token_id', pa.string()),
     ('price', pa.float64())
+])
+
+LEADERBOARD_SCHEMA = pa.schema([
+    ('rank', pa.string()),
+    ('proxyWallet', pa.string()),
+    ('userName', pa.string()),
+    ('xUsername', pa.string()),
+    ('verifiedBadge', pa.bool_()),
+    ('vol', pa.float64()),
+    ('pnl', pa.float64()),
+    ('profileImage', pa.string())
 ])
 
 
@@ -436,6 +448,8 @@ class ParquetPersister:
             self._write_market_token_parquet(items)
         elif self._data_type == DataType.PRICE:
             self._write_price_parquet(items)
+        elif self._data_type == DataType.LEADERBOARD:
+            self._write_leaderboard_parquet(items)
         else:
             raise ValueError(f"Unknown data type: {self._data_type}")
 
@@ -669,6 +683,62 @@ class ParquetPersister:
                 extra={"filepath": str(filepath) if 'filepath' in locals() else None}
             )
 
+    def _write_leaderboard_parquet(self, items: List[Dict[str, Any]]) -> None:
+        """
+        Write a batch of leaderboard items to a parquet file.
+        
+        Args:
+            items: List of leaderboard dictionaries to write
+        """
+        if not items:
+            return
+        
+        try:
+            timestamp = datetime.now()
+            
+            # Build output path
+            if self._use_hive_partitioning:
+                date_partition = timestamp.strftime("dt=%Y-%m-%d")
+                partition_dir = self._output_dir / date_partition
+                partition_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                partition_dir = self._output_dir
+            
+            filename = f"leaderboard_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.parquet"
+            filepath = partition_dir / filename
+            
+            # Convert to PyArrow table
+            if len(LEADERBOARD_SCHEMA) > 0:
+                table = pa.Table.from_pylist(items, schema=LEADERBOARD_SCHEMA)
+            else:
+                table = pa.Table.from_pylist(items)
+            
+            # Write parquet file
+            pq.write_table(
+                table,
+                filepath,
+                compression='snappy',
+                use_dictionary=True,
+                write_statistics=True
+            )
+            
+            # Update stats
+            with self._lock:
+                self._files_written += 1
+                self._total_records_written += len(items)
+                file_num = self._files_written
+            
+            logger.info(
+                f"Written {len(items)} leaderboard records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
+        
+        except Exception as e:
+            logger.exception(
+                f"Error writing leaderboard parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
+
     @property
     def stats(self) -> Dict[str, int]:
         """Return current write statistics."""
@@ -828,5 +898,30 @@ def create_price_persisted_queue(
         threshold=threshold,
         output_dir=output_dir,
         data_type=DataType.PRICE,
+        auto_start=auto_start
+    )
+
+
+def create_leaderboard_persisted_queue(
+    threshold: int = 5000,
+    output_dir: str = "data/leaderboard",
+    auto_start: bool = True
+) -> tuple[SwappableQueue, ParquetPersister]:
+    """
+    Create a queue with attached parquet persister for leaderboard data.
+    Convenience wrapper around create_persisted_queue.
+    
+    Args:
+        threshold: Number of items that triggers a write
+        output_dir: Directory for parquet files
+        auto_start: Start the persister immediately
+    
+    Returns:
+        Tuple of (queue, persister)
+    """
+    return create_persisted_queue(
+        threshold=threshold,
+        output_dir=output_dir,
+        data_type=DataType.LEADERBOARD,
         auto_start=auto_start
     )

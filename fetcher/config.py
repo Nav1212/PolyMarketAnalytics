@@ -26,6 +26,7 @@ class QueuesConfig:
     market_threshold: int = 1000
     market_token_threshold: int = 5000
     price_threshold: int = 10000
+    leaderboard_threshold: int = 5000
 
 
 @dataclass
@@ -44,6 +45,7 @@ class OutputDirsConfig:
     market: str = "data/markets"
     market_token: str = "data/market_tokens"
     price: str = "data/prices"
+    leaderboard: str = "data/leaderboard"
 
 
 @dataclass

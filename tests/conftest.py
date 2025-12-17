@@ -48,13 +48,15 @@ def test_config() -> Config:
             trade_threshold=100,  # Small for testing
             market_threshold=50,
             market_token_threshold=50,
-            price_threshold=100
+            price_threshold=100,
+            leaderboard_threshold=100
         ),
         output_dirs=OutputDirsConfig(
             trade="test_data/trades",
             market="test_data/markets",
             market_token="test_data/market_tokens",
-            price="test_data/prices"
+            price="test_data/prices",
+            leaderboard="test_data/leaderboard"
         ),
         api=ApiConfig(
             timeout=5.0,

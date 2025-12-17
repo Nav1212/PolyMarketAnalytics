@@ -5,8 +5,10 @@ Fetches markets, all markets
 
 import base64
 import httpx
+import json
 from typing import List, Dict, Any, Union, Optional
 from datetime import datetime
+from pathlib import Path
 from queue import Queue, Empty
 import threading
 import time
@@ -15,6 +17,7 @@ from swappable_queue import SwappableQueue
 from parquet_persister import ParquetPersister, create_market_persisted_queue
 from worker_manager import WorkerManager, get_worker_manager
 from config import get_config, Config
+from cursor_manager import CursorManager, get_cursor_manager
 
 
 class MarketFetcher:
@@ -32,7 +35,8 @@ class MarketFetcher:
         price_token_queue: Optional[Queue] = None,
         leaderboard_market_queue: Optional[Queue] = None,
         output_queue: Optional[Union[Queue, SwappableQueue]] = None,
-        market_token_queue: Optional[Union[Queue, SwappableQueue]] = None
+        market_token_queue: Optional[Union[Queue, SwappableQueue]] = None,
+        cursor_manager: Optional[CursorManager] = None
     ):
         """
         Initialize the market fetcher.
@@ -46,8 +50,10 @@ class MarketFetcher:
             leaderboard_market_queue: Queue to write market condition IDs for leaderboard fetcher
             output_queue: Queue to write market data to (used by coordinator)
             market_token_queue: Queue to write extracted token data for parquet persistence
+            cursor_manager: CursorManager for progress persistence (uses global if None)
         """
         self._config = config or get_config()
+        self._cursor_manager = cursor_manager or get_cursor_manager()
         self.client = ClobClient(
             host="https://clob.polymarket.com",
             chain_id=137
@@ -277,9 +283,12 @@ class MarketFetcher:
         print(f"[Market Worker {worker_id}] Finished, total markets: {total_markets}")
     
     def _send_shutdown_signals(self) -> None:
-        """Send None sentinels to downstream queues to signal completion."""
+        """Send None sentinels to downstream queues and save queue state to disk."""
         from config import get_config
         config = get_config()
+        
+        # Save downstream queue contents before sending sentinels
+        self._save_downstream_queues()
         
         # Send sentinel to trade queue for each trade worker
         if self._trade_market_queue is not None:
@@ -295,6 +304,84 @@ class MarketFetcher:
         if self._leaderboard_market_queue is not None:
             for _ in range(config.workers.leaderboard):
                 self._leaderboard_market_queue.put(None)
+    
+    def _save_downstream_queues(self) -> None:
+        """
+        Save the current contents of downstream queues to disk for recovery.
+        This allows resuming from where we left off if the process is interrupted.
+        """
+        queue_state = {
+            "trade_markets": [],
+            "price_tokens": []
+        }
+        
+        # Copy trade queue contents (thread-safe)
+        if self._trade_market_queue is not None:
+            with self._trade_market_queue.mutex:
+                trade_markets = list(self._trade_market_queue.queue)
+            queue_state["trade_markets"] = [m for m in trade_markets if m is not None]
+        
+        # Copy price queue contents
+        if self._price_token_queue is not None:
+            with self._price_token_queue.mutex:
+                price_tokens = list(self._price_token_queue.queue)
+            queue_state["price_tokens"] = [
+                list(t) if isinstance(t, tuple) else t 
+                for t in price_tokens if t is not None
+            ]
+        
+        # Save to file
+        queue_file = Path(__file__).parent / "downstream_queues.json"
+        try:
+            with open(queue_file, 'w') as f:
+                json.dump(queue_state, f, indent=2)
+            print(f"Saved downstream queue state: {len(queue_state['trade_markets'])} trades, {len(queue_state['price_tokens'])} prices")
+        except Exception as e:
+            print(f"Error saving downstream queues: {e}")
+    
+    def restore_downstream_queues(self) -> bool:
+        """
+        Restore downstream queues from saved state file.
+        
+        Returns:
+            True if queues were restored, False if no saved state
+        """
+        queue_file = Path(__file__).parent / "downstream_queues.json"
+        if not queue_file.exists():
+            return False
+        
+        try:
+            with open(queue_file, 'r') as f:
+                queue_state = json.load(f)
+            
+            restored = False
+            
+            if self._trade_market_queue is not None:
+                for market in queue_state.get("trade_markets", []):
+                    self._trade_market_queue.put(market)
+                if queue_state.get("trade_markets"):
+                    print(f"Restored {len(queue_state['trade_markets'])} markets to trade queue")
+                    restored = True
+            
+            if self._price_token_queue is not None:
+                for token in queue_state.get("price_tokens", []):
+                    if isinstance(token, list):
+                        self._price_token_queue.put(tuple(token))
+                    else:
+                        self._price_token_queue.put(token)
+                if queue_state.get("price_tokens"):
+                    print(f"Restored {len(queue_state['price_tokens'])} tokens to price queue")
+                    restored = True
+            
+            if restored:
+                queue_file.unlink()
+                print("Deleted downstream_queues.json after restore")
+            
+            return restored
+            
+        except Exception as e:
+            print(f"Error restoring downstream queues: {e}")
+            return False
     
     def run_workers(
         self,

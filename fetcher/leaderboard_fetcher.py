@@ -91,9 +91,86 @@ class LeaderboardFetcher:
     def __exit__(self, *args):
         self.close()
     
+    @staticmethod
+    def get_all_categories() -> List[LeaderboardCategory]:
+        """Return all leaderboard categories in order."""
+        return list(LeaderboardCategory)
+    
+    @staticmethod
+    def get_all_time_periods() -> List[LeaderboardTimePeriod]:
+        """Return all leaderboard time periods in order."""
+        return list(LeaderboardTimePeriod)
+    
+    def fetch_leaderboard_page(
+        self,
+        category: Union[LeaderboardCategory, str],
+        timePeriod: Union[LeaderboardTimePeriod, str],
+        orderBy: Union[LeaderboardOrderBy, str] = LeaderboardOrderBy.PNL,
+        limit: int = 50,
+        offset: int = 0,
+        loop_start: Optional[float] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch a single page of leaderboard data.
+        
+        Args:
+            category: Category filter
+            timePeriod: Time period filter
+            orderBy: Order by field (default PNL)
+            limit: Number of entries per request (default 50)
+            offset: Offset for pagination
+            loop_start: Timestamp for rate limit timing tracking
+        
+        Returns:
+            List of leaderboard entries for this page
+        """
+        category_str = category.value if isinstance(category, LeaderboardCategory) else category
+        time_period_str = timePeriod.value if isinstance(timePeriod, LeaderboardTimePeriod) else timePeriod
+        order_by_str = orderBy.value if isinstance(orderBy, LeaderboardOrderBy) else orderBy
+        
+        params = {
+            "category": category_str,
+            "timePeriod": time_period_str,
+            "OrderBy": order_by_str,
+            "limit": limit,
+            "offset": offset
+        }
+        
+        if loop_start is None:
+            loop_start = time.time()
+        
+        self._manager.acquire_leaderboard(loop_start)
+        
+        try:
+            response = self.client.get(
+                f"{self._data_api_base}/v1/leaderboard",
+                params=params
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            # Handle different response formats
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, dict) and "data" in data:
+                return data["data"]
+            else:
+                return [data] if data else []
+                
+        except httpx.HTTPStatusError as e:
+            print(f"HTTP error fetching leaderboard: {e.response.status_code} - {e.response.text}")
+            return []
+        
+        except httpx.RequestError as e:
+            print(f"Request error fetching leaderboard: {e}")
+            return []
+        
+        except Exception as e:
+            print(f"Unexpected error fetching leaderboard: {e}")
+            return []
+    
     def fetch_leaderboard(
         self,
-        market: str,
         category: Union[LeaderboardCategory, str] = LeaderboardCategory.OVERALL,
         timePeriod: Union[LeaderboardTimePeriod, str] = LeaderboardTimePeriod.DAY,
         orderBy: Union[LeaderboardOrderBy, str] = LeaderboardOrderBy.PNL,
@@ -102,10 +179,9 @@ class LeaderboardFetcher:
         loop_start: Optional[float] = None
     ) -> Generator[Any, None, None]:
         """
-        Fetch leaderboard for a specific market.
+        Fetch leaderboard for a category/time period combination.
         
         Args:
-            market: Market condition_id (e.g., "0x123abc...")
             category: Category filter (default OVERALL)
             timePeriod: Time period filter (default DAY)
             orderBy: Order by field (default PNL)
@@ -115,12 +191,6 @@ class LeaderboardFetcher:
         
         Yields:
             Response objects containing leaderboard entries
-        
-        Example:
-            >>> fetcher = LeaderboardFetcher()
-            >>> for response in fetcher.fetch_leaderboard("0x123abc..."):
-            ...     data = response.json()
-            ...     print(data)
         """
         # Convert enums to string values
         category_str = category.value if isinstance(category, LeaderboardCategory) else category
@@ -132,7 +202,6 @@ class LeaderboardFetcher:
         while offset < max_offset:
             params = {
                 "category": category_str,
-                "market": market,
                 "timePeriod": time_period_str,
                 "OrderBy": order_by_str,
                 "limit": limit,
@@ -150,8 +219,21 @@ class LeaderboardFetcher:
                     params=params
                 )
                 response.raise_for_status()
+                
+                # Check if we got empty results (end of data)
+                data = response.json()
+                if isinstance(data, list) and len(data) == 0:
+                    return
+                if isinstance(data, dict) and len(data.get("data", [])) == 0:
+                    return
+                
                 yield response
                 offset += limit
+                
+                # If we got fewer results than limit, we're done
+                result_count = len(data) if isinstance(data, list) else len(data.get("data", []))
+                if result_count < limit:
+                    return
                 
                 # Reset loop_start for next iteration
                 loop_start = None
@@ -168,160 +250,178 @@ class LeaderboardFetcher:
                 print(f"Unexpected error fetching leaderboard: {e}")
                 return
     
-    def fetch_leaderboard_all(
+    def fetch_all_combinations(
         self,
-        market: str,
-        category: Union[LeaderboardCategory, str] = LeaderboardCategory.OVERALL,
-        timePeriod: Union[LeaderboardTimePeriod, str] = LeaderboardTimePeriod.DAY,
+        output_queue: Union[Queue, SwappableQueue],
+        trader_queue: Optional[Union[Queue, SwappableQueue]] = None,
         orderBy: Union[LeaderboardOrderBy, str] = LeaderboardOrderBy.PNL,
         limit: int = 50,
         max_offset: int = 10000
-    ) -> List[Dict[str, Any]]:
+    ) -> int:
         """
-        Fetch all leaderboard entries for a specific market.
+        Fetch leaderboard for all category/time_period combinations.
+        Saves cursor after each page for crash recovery.
         
         Args:
-            market: Market condition_id (e.g., "0x123abc...")
-            category: Category filter (default OVERALL)
-            timePeriod: Time period filter (default DAY)
+            output_queue: Queue to add fetched leaderboard entries to
+            trader_queue: Optional queue to add trader wallet addresses for trade fetching
             orderBy: Order by field (default PNL)
             limit: Number of entries per request (default 50)
-            max_offset: Maximum offset to fetch (default 10000)
+            max_offset: Maximum offset per combination
         
         Returns:
-            List of all leaderboard entries
-        
-        Example:
-            >>> fetcher = LeaderboardFetcher()
-            >>> entries = fetcher.fetch_leaderboard_all("0x123abc...")
-            >>> print(f"Total entries: {len(entries)}")
-        """
-        all_entries = []
-        
-        for response in self.fetch_leaderboard(
-            market=market,
-            category=category,
-            timePeriod=timePeriod,
-            orderBy=orderBy,
-            limit=limit,
-            max_offset=max_offset
-        ):
-            data = response.json()
-            if isinstance(data, list):
-                all_entries.extend(data)
-            elif isinstance(data, dict) and "data" in data:
-                all_entries.extend(data["data"])
-            else:
-                all_entries.append(data)
-        
-        return all_entries
-    
-    def _worker(
-        self,
-        worker_id: int,
-        market_queue: Queue,
-        output_queue: Union[Queue, SwappableQueue],
-        category: Union[LeaderboardCategory, str] = LeaderboardCategory.OVERALL,
-        timePeriod: Union[LeaderboardTimePeriod, str] = LeaderboardTimePeriod.DAY,
-        OrderBy: Union[LeaderboardOrderBy, str] = LeaderboardOrderBy.PNL
-    ):
-        """
-        Worker thread that fetches leaderboard data from the market queue.
-        
-        Args:
-            worker_id: ID of this worker
-            market_queue: Queue containing market IDs to process
-            output_queue: Queue to add fetched leaderboard entries to
-            category: Category filter (default OVERALL)
-            timePeriod: Time period filter (default DAY)
-            OrderBy: Order by field (default PNL)
+            Total number of entries fetched
         """
         is_swappable = isinstance(output_queue, SwappableQueue)
+        trader_queue_is_swappable = isinstance(trader_queue, SwappableQueue) if trader_queue else False
+        categories = self.get_all_categories()
+        time_periods = self.get_all_time_periods()
         
-        # Convert to string for cursor storage
-        category_str = category.value if isinstance(category, LeaderboardCategory) else category
-        time_period_str = timePeriod.value if isinstance(timePeriod, LeaderboardTimePeriod) else timePeriod
+        # Load cursor to resume from last position
+        cursor = self._cursor_manager.get_leaderboard_cursor()
         
-        while True:
-            try:
-                # Get a market from the queue (blocks until available, with timeout)
-                market = market_queue.get(timeout=1.0)
+        if cursor.completed:
+            print("[Leaderboard] Already completed all combinations")
+            return 0
+        
+        start_cat_idx = cursor.current_category_index
+        start_tp_idx = cursor.current_time_period_index
+        start_offset = cursor.current_offset
+        
+        total_entries = 0
+        
+        for cat_idx, category in enumerate(categories):
+            # Skip categories before resume point
+            if cat_idx < start_cat_idx:
+                continue
                 
-                # Handle poison pill for graceful shutdown
-                if market is None:
-                    market_queue.task_done()
-                    break
+            for tp_idx, time_period in enumerate(time_periods):
+                # Skip time periods before resume point
+                if cat_idx == start_cat_idx and tp_idx < start_tp_idx:
+                    continue
                 
-                display_id = market[:16] + "..." if len(market) > 16 else market
-                print(f"[Leaderboard Worker {worker_id}] Processing market: {display_id}")
+                # Determine starting offset
+                if cat_idx == start_cat_idx and tp_idx == start_tp_idx:
+                    offset = start_offset
+                else:
+                    offset = 0
                 
-                entries = self.fetch_leaderboard_all(
-                    market=market,
-                    category=category,
-                    timePeriod=timePeriod, 
-                    orderBy=OrderBy,
-                )
+                print(f"[Leaderboard] Fetching {category.value}/{time_period.value} from offset {offset}")
                 
-                if entries:
+                while offset < max_offset:
+                    # Update cursor before each request
+                    self._cursor_manager.update_leaderboard_cursor(
+                        current_category_index=cat_idx,
+                        current_time_period_index=tp_idx,
+                        current_offset=offset,
+                        completed=False
+                    )
+                    self._cursor_manager.save_cursors()
+                    
+                    entries = self.fetch_leaderboard_page(
+                        category=category,
+                        timePeriod=time_period,
+                        orderBy=orderBy,
+                        limit=limit,
+                        offset=offset
+                    )
+                    
+                    if not entries:
+                        break
+                    
+                    # Add category and time_period to each entry for tracking
+                    for entry in entries:
+                        entry['_category'] = category.value
+                        entry['_timePeriod'] = time_period.value
+                    
                     if is_swappable:
                         output_queue.put_many(entries)
                     else:
                         for entry in entries:
                             output_queue.put(entry)
                     
-                    print(f"[Leaderboard Worker {worker_id}] Fetched {len(entries)} entries for {display_id}")
+                    # Add trader wallets to trader queue for downstream trade fetching
+                    if trader_queue:
+                        wallets = [entry.get('proxyWallet') for entry in entries if entry.get('proxyWallet')]
+                        if wallets:
+                            if trader_queue_is_swappable:
+                                trader_queue.put_many(wallets)
+                            else:
+                                for wallet in wallets:
+                                    trader_queue.put(wallet)
+                    
+                    total_entries += len(entries)
+                    offset += limit
+                    
+                    # If we got fewer results than limit, we're done with this combination
+                    if len(entries) < limit:
+                        break
                 
-                # Market completed - remove from pending list
-                current_cursor = self._cursor_manager.get_leaderboard_cursor()
-                pending = [m for m in current_cursor.pending_markets if m != market]
-                self._cursor_manager.update_leaderboard_cursor(
-                    category=category_str,
-                    time_period=time_period_str,
-                    pending_markets=pending
-                )
-                
-                # Mark the task as done
-                market_queue.task_done()
-                                
-            except Empty:
-                # Queue is empty, continue waiting
-                continue
-            
-            except Exception as e:
-                print(f"[Leaderboard Worker {worker_id}] Error: {e}")
+                print(f"[Leaderboard] Completed {category.value}/{time_period.value}, total so far: {total_entries}")
+        
+        # Mark as completed
+        self._cursor_manager.update_leaderboard_cursor(
+            current_category_index=len(categories) - 1,
+            current_time_period_index=len(time_periods) - 1,
+            current_offset=0,
+            completed=True
+        )
+        self._cursor_manager.save_cursors()
+        
+        print(f"[Leaderboard] Completed all combinations, total entries: {total_entries}")
+        return total_entries
+    
+    def _worker(
+        self,
+        worker_id: int,
+        output_queue: Union[Queue, SwappableQueue],
+        trader_queue: Optional[Union[Queue, SwappableQueue]] = None,
+        stop_event: Optional[threading.Event] = None
+    ):
+        """
+        Worker thread that fetches leaderboard data for all enum combinations.
+        
+        Args:
+            worker_id: ID of this worker
+            output_queue: Queue to add fetched leaderboard entries to
+            trader_queue: Optional queue to add trader wallet addresses for trade fetching
+            stop_event: Optional event to signal stop
+        """
+        print(f"[Leaderboard Worker {worker_id}] Starting enum iteration...")
+        
+        try:
+            total = self.fetch_all_combinations(output_queue, trader_queue=trader_queue)
+            print(f"[Leaderboard Worker {worker_id}] Finished, total entries: {total}")
+        except Exception as e:
+            print(f"[Leaderboard Worker {worker_id}] Error: {e}")
     
     def run_workers(
         self,
-        market_queue: Queue,
         output_queue: Union[Queue, SwappableQueue],
-        category: Union[LeaderboardCategory, str] = LeaderboardCategory.OVERALL,
-        timePeriod: Union[LeaderboardTimePeriod, str] = LeaderboardTimePeriod.DAY,
-        num_workers: Optional[int] = None
+        trader_queue: Optional[Union[Queue, SwappableQueue]] = None,
+        num_workers: int = 1,
+        stop_event: Optional[threading.Event] = None
     ) -> List[threading.Thread]:
         """
-        Start worker threads to fetch leaderboard data from the market queue.
+        Start a worker thread to fetch leaderboard data for all enum combinations.
+        
+        Note: Only one worker is used since we're iterating through combinations,
+        not consuming from a queue.
         
         Args:
-            market_queue: Queue containing market IDs to process (workers pull from this)
             output_queue: Queue to add fetched leaderboard entries to
-            category: Category filter (default OVERALL)
-            timePeriod: Time period filter (default DAY)
-            num_workers: Number of workers (uses config if None)
+            trader_queue: Optional queue to add trader wallet addresses for trade fetching
+            num_workers: Number of workers (only 1 is used for enum iteration)
+            stop_event: Optional event to signal stop
         
         Returns:
             List of started threads (caller should join them)
         """
-        if num_workers is None:
-            num_workers = self._config.workers.leaderboard
-        
-        threads = []
-        for i in range(num_workers):
-            t = threading.Thread(
-                target=self._worker,
-                args=(i, market_queue, output_queue, category, timePeriod),
-                daemon=True
-            )
-            t.start()
-            threads.append(t)
-        
-        return threads
+        # Only use 1 worker for enum iteration
+        t = threading.Thread(
+            target=self._worker,
+            args=(0, output_queue, trader_queue, stop_event),
+            daemon=True
+        )
+        t.start()
+        return [t]

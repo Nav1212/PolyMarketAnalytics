@@ -1,0 +1,25 @@
+{
+  "trades": {
+    "market": "",
+    "offset": 0,
+    "filter_amount": 0,
+    "pending_markets": []
+  },
+  "prices": {
+    "token_id": "",
+    "start_ts": 1765846262,
+    "end_ts": 1765932662,
+    "pending_tokens": []
+  },
+  "leaderboard": {
+    "current_category_index": 0,
+    "current_time_period_index": 0,
+    "current_offset": 0,
+    "completed": true
+  },
+  "markets": {
+    "next_cursor": "",
+    "completed": false
+  },
+  "last_updated": "2025-12-16T19:51:06.163455"
+}

@@ -37,6 +37,7 @@ from parquet_persister import (
     create_market_token_persisted_queue,
     create_trade_persisted_queue,
     create_price_persisted_queue,
+    create_leaderboard_persisted_queue,
     DataType
 )
 from cursor_manager import (
@@ -121,6 +122,7 @@ class FetcherCoordinator:
         self._market_token_persister: Optional[ParquetPersister] = None
         self._trade_persister: Optional[ParquetPersister] = None
         self._price_persister: Optional[ParquetPersister] = None
+        self._leaderboard_persister: Optional[ParquetPersister] = None
         
         # Worker threads
         self._worker_threads: List[Thread] = []
@@ -162,8 +164,12 @@ class FetcherCoordinator:
                 auto_start=True
             )
             
-            # Leaderboard: no parquet persistence (just queue)
-            self._leaderboard_output_queue = SwappableQueue()
+            # Leaderboard: persisted to parquet
+            self._leaderboard_output_queue, self._leaderboard_persister = create_leaderboard_persisted_queue(
+                threshold=self._config.queues.leaderboard_threshold,
+                output_dir=self._config.output_dirs.leaderboard,
+                auto_start=True
+            )
         else:
             self._market_output_queue = Queue()
             self._market_token_output_queue = Queue()
@@ -302,8 +308,6 @@ class FetcherCoordinator:
     def run_trades(
         self,
         market_ids: List[str],
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
         num_workers: Optional[int] = None,
         use_swappable: bool = True
     ) -> Union[Queue, SwappableQueue]:
@@ -613,6 +617,9 @@ class FetcherCoordinator:
         if self._price_persister:
             self._price_persister.stop()
             print(f"  Price persister: {self._price_persister.stats}")
+        if self._leaderboard_persister:
+            self._leaderboard_persister.stop()
+            print(f"  Leaderboard persister: {self._leaderboard_persister.stats}")
     
     def signal_shutdown(self) -> None:
         """Signal all fetchers to shut down by sending sentinel values."""

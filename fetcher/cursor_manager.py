@@ -44,13 +44,14 @@ class PriceCursor:
 
 @dataclass
 class LeaderboardCursor:
-    """Cursor for leaderboard fetching progress."""
-    category: str = "OVERALL"
-    time_period: str = "DAY"
-    pending_markets: List[str] = field(default_factory=list)
+    """Cursor for leaderboard fetching progress through all category/time_period combinations."""
+    current_category_index: int = 0  # Index into category enum list
+    current_time_period_index: int = 0  # Index into time_period enum list
+    current_offset: int = 0  # Offset within current combination
+    completed: bool = False
     
     def is_empty(self) -> bool:
-        return not self.pending_markets
+        return self.current_category_index == 0 and self.current_time_period_index == 0 and self.current_offset == 0 and not self.completed
 
 
 @dataclass
@@ -178,9 +179,10 @@ class CursorManager:
                     # Parse leaderboard cursor
                     lb_data = data.get('leaderboard', {})
                     self._cursors.leaderboard = LeaderboardCursor(
-                        category=lb_data.get('category', 'OVERALL'),
-                        time_period=lb_data.get('time_period', 'DAY'),
-                        pending_markets=lb_data.get('pending_markets', [])
+                        current_category_index=lb_data.get('current_category_index', 0),
+                        current_time_period_index=lb_data.get('current_time_period_index', 0),
+                        current_offset=lb_data.get('current_offset', 0),
+                        completed=lb_data.get('completed', False)
                     )
                     
                     # Parse market cursor
@@ -227,9 +229,10 @@ class CursorManager:
                     'pending_tokens': self._cursors.prices.pending_tokens
                 },
                 'leaderboard': {
-                    'category': self._cursors.leaderboard.category,
-                    'time_period': self._cursors.leaderboard.time_period,
-                    'pending_markets': self._cursors.leaderboard.pending_markets
+                    'current_category_index': self._cursors.leaderboard.current_category_index,
+                    'current_time_period_index': self._cursors.leaderboard.current_time_period_index,
+                    'current_offset': self._cursors.leaderboard.current_offset,
+                    'completed': self._cursors.leaderboard.completed
                 },
                 'markets': {
                     'next_cursor': self._cursors.markets.next_cursor,
@@ -333,25 +336,27 @@ class CursorManager:
     # Leaderboard cursor methods
     def update_leaderboard_cursor(
         self,
-        category: str,
-        time_period: str,
-        pending_markets: Optional[List[str]] = None
+        current_category_index: int,
+        current_time_period_index: int,
+        current_offset: int = 0,
+        completed: bool = False
     ) -> None:
         """Update the leaderboard cursor."""
         with self._lock:
-            self._cursors.leaderboard.category = category
-            self._cursors.leaderboard.time_period = time_period
-            if pending_markets is not None:
-                self._cursors.leaderboard.pending_markets = pending_markets
+            self._cursors.leaderboard.current_category_index = current_category_index
+            self._cursors.leaderboard.current_time_period_index = current_time_period_index
+            self._cursors.leaderboard.current_offset = current_offset
+            self._cursors.leaderboard.completed = completed
             self._dirty = True
     
     def get_leaderboard_cursor(self) -> LeaderboardCursor:
         """Get the current leaderboard cursor."""
         with self._lock:
             return LeaderboardCursor(
-                category=self._cursors.leaderboard.category,
-                time_period=self._cursors.leaderboard.time_period,
-                pending_markets=list(self._cursors.leaderboard.pending_markets)
+                current_category_index=self._cursors.leaderboard.current_category_index,
+                current_time_period_index=self._cursors.leaderboard.current_time_period_index,
+                current_offset=self._cursors.leaderboard.current_offset,
+                completed=self._cursors.leaderboard.completed
             )
     
     def clear_leaderboard_cursor(self) -> None:

@@ -225,12 +225,14 @@ class TradeFetcher:
                 # Fetch all trades for this market
                 trade_count = 0
                 while True:
-                    # Update cursor with current progress
+                    # Update cursor with current progress and save immediately
                     self._cursor_manager.update_trade_cursor(
                         market=market,
                         offset=offset,
                         filter_amount=filteramount
                     )
+                    # Save cursor to disk after every batch for crash recovery
+                    self._cursor_manager.save_cursors()
                     
                     loop_start = time.time()
                     trades = self.fetch_trades(
