@@ -344,7 +344,7 @@ class LeaderboardFetcher:
                     if trader_queue:
                         wallets = [entry.get('proxyWallet') for entry in entries if entry.get('proxyWallet')]
                         if wallets:
-                            if trader_queue_is_swappable:
+                            if isinstance(trader_queue, SwappableQueue):
                                 trader_queue.put_many(wallets)
                             else:
                                 for wallet in wallets:

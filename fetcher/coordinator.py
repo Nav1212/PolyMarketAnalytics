@@ -283,7 +283,6 @@ class FetcherCoordinator:
         
         # LeaderboardFetcher - has its own run_workers
         leaderboard_threads = self._leaderboard_fetcher.run_workers(
-            market_queue=self._leaderboard_market_queue,
             output_queue=self._leaderboard_output_queue,
             num_workers=leaderboard_workers
         )
@@ -491,20 +490,17 @@ class FetcherCoordinator:
     
     def run_leaderboard(
         self,
-        market_ids: List[str],
-        category: str = "OVERALL",
-        time_period: str = "DAY",
         num_workers: Optional[int] = None,
         use_swappable: bool = True
     ) -> Union[Queue, SwappableQueue]:
         """
-        Run only LeaderboardFetcher for specific market IDs.
+        Run only LeaderboardFetcher to iterate through all category/time_period combinations.
+        
+        The LeaderboardFetcher internally iterates through all enum combinations
+        and supports cursor-based resumption.
         
         Args:
-            market_ids: List of market condition IDs to fetch leaderboard for
-            category: Leaderboard category filter
-            time_period: Leaderboard time period filter
-            num_workers: Number of worker threads (default from config)
+            num_workers: Number of worker threads (default from config, but only 1 is used)
             use_swappable: Use SwappableQueue for output
         
         Returns:
@@ -515,33 +511,10 @@ class FetcherCoordinator:
         # Check for existing cursor to resume from
         lb_cursor = self._cursor_manager.get_leaderboard_cursor()
         
-        # Create input queue
-        input_queue = Queue()
-        
-        if not lb_cursor.is_empty() and lb_cursor.pending_markets:
-            # Resume from cursor - use pending markets and settings from cursor
-            print(f"Resuming leaderboard from cursor: {len(lb_cursor.pending_markets)} markets pending")
-            resume_market_ids = lb_cursor.pending_markets
-            category = lb_cursor.category
-            time_period = lb_cursor.time_period
-        else:
-            # Fresh start - use provided market IDs
-            resume_market_ids = market_ids
-        
-        # Store pending markets in cursor for tracking
-        self._cursor_manager.update_leaderboard_cursor(
-            category=category,
-            time_period=time_period,
-            pending_markets=list(resume_market_ids)
-        )
-        
-        # Populate queue with market IDs
-        for market_id in resume_market_ids:
-            input_queue.put(market_id)
-        
-        # Add sentinel values for each worker
-        for _ in range(num_workers):
-            input_queue.put(None)
+        if not lb_cursor.is_empty():
+            # Resume from cursor
+            print(f"Resuming leaderboard from cursor: category_index={lb_cursor.current_category_index}, "
+                  f"time_period_index={lb_cursor.current_time_period_index}, offset={lb_cursor.current_offset}")
         
         # Create output queue
         if use_swappable:
@@ -555,10 +528,7 @@ class FetcherCoordinator:
         )
         
         leaderboard_threads = self._leaderboard_fetcher.run_workers(
-            market_queue=input_queue,
             output_queue=output_queue,
-            category=category,
-            timePeriod=time_period,
             num_workers=num_workers
         )
         self._worker_threads.extend(leaderboard_threads)
