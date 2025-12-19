@@ -1,25 +1,26 @@
 {
   "trades": {
-    "market": "",
-    "offset": 0,
-    "filter_amount": 0,
+    "market": "0x41190eb9336ae73949c04f4900f9865092e69a57cf9c942a6157abf6ae8d16c6",
+    "offset": 500,
+    "filter_amount": 32,
     "pending_markets": []
   },
   "prices": {
-    "token_id": "",
-    "start_ts": 0,
-    "end_ts": 0,
-    "pending_tokens": []
+    "token_id": "56393761733830483601097051857899348522495376869600726893014309766300892311293",
+    "start_ts": 1678929000,
+    "end_ts": 1766163223,
+    "pending_tokens": [],
+    "completed": false
   },
   "leaderboard": {
     "current_category_index": 0,
     "current_time_period_index": 0,
-    "current_offset": 0,
-    "completed": true
-  },
-  "markets": {
-    "next_cursor": "",
+    "current_offset": 3500,
     "completed": false
   },
-  "last_updated": "2025-12-16T23:26:02.303247"
+  "markets": {
+    "next_cursor": "MTcwMDA=",
+    "completed": false
+  },
+  "last_updated": "2025-12-19T11:53:53.262752"
 }

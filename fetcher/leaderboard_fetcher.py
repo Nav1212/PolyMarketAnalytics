@@ -288,8 +288,16 @@ class LeaderboardFetcher:
         cursor = self._cursor_manager.get_leaderboard_cursor()
         
         if cursor.completed:
-            print("[Leaderboard] Already completed all combinations")
-            return 0
+            # Reset completed flag for new run - previous completion doesn't mean we skip
+            # A new run means user wants fresh data
+            print("[Leaderboard] Previous run completed, starting fresh fetch")
+            self._cursor_manager.update_leaderboard_cursor(
+                current_category_index=0,
+                current_time_period_index=0,
+                current_offset=0,
+                completed=False
+            )
+            cursor = self._cursor_manager.get_leaderboard_cursor()
         
         start_cat_idx = cursor.current_category_index
         start_tp_idx = cursor.current_time_period_index
@@ -410,6 +418,7 @@ class LeaderboardFetcher:
         worker_id: int,
         output_queue: Union[Queue, SwappableQueue],
         trader_queue: Optional[Union[Queue, SwappableQueue]] = None,
+        stop_event: Optional[threading.Event] = None,
     ):
         """
         Worker thread that fetches leaderboard data for all enum combinations.

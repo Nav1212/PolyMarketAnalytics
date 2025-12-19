@@ -275,9 +275,11 @@ class MarketFetcher:
         # Check for existing cursor to resume from
         market_cursor = self._cursor_manager.get_market_cursor()
         if market_cursor.completed:
-            print(f"[Market Worker {worker_id}] Markets already completed in previous run, skipping...")
-            self._send_shutdown_signals()
-            return
+            # Reset completed flag for new run - previous completion doesn't mean we skip
+            # A new run means user wants fresh data
+            print(f"[Market Worker {worker_id}] Previous run completed, starting fresh fetch")
+            self._cursor_manager.update_market_cursor("", completed=False)
+            market_cursor = self._cursor_manager.get_market_cursor()
         
         next_cursor = market_cursor.next_cursor if market_cursor.next_cursor else None
         if next_cursor:

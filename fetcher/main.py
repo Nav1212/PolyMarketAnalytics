@@ -101,8 +101,6 @@ def fetch_trades_multimarket(market_ids: list, start_time: int, end_time: int, n
     
     return coordinator.run_trades(
         market_ids=market_ids,
-        start_time=start_time,
-        end_time=end_time,
         num_workers=num_workers
     )
 
@@ -170,8 +168,10 @@ def main():
         if not cursors.prices.is_empty():
             print(f"  Prices: {len(cursors.prices.pending_tokens)} tokens pending")
         if not cursors.leaderboard.is_empty():
-            print(f"  Leaderboard: {len(cursors.leaderboard.pending_markets)} markets pending")
-            print(f"    Category: {cursors.leaderboard.category}, Period: {cursors.leaderboard.time_period}")
+            print(f"  Leaderboard: category_idx={cursors.leaderboard.current_category_index}, period_idx={cursors.leaderboard.current_time_period_index}")
+            print(f"    Offset: {cursors.leaderboard.current_offset}, Completed: {cursors.leaderboard.completed}")
+        if not cursors.markets.is_empty():
+            print(f"  Markets: cursor={cursors.markets.next_cursor[:20] if cursors.markets.next_cursor else 'None'}..., completed={cursors.markets.completed}")
         print("=" * 60 + "\n")
     
     config = get_config()
@@ -237,8 +237,6 @@ def main():
             
             trade_queue = coordinator.run_trades(
                 market_ids=market_ids,
-                start_time=start_ts,
-                end_time=end_ts
             )
             
             print("Trade fetcher started. Waiting for completion...")
@@ -295,7 +293,7 @@ def main():
             print(f"Leaderboard Workers: {config.workers.leaderboard}")
             print()
             
-            leaderboard_queue = coordinator.run_leaderboard(market_ids=market_ids)
+            leaderboard_queue = coordinator.run_leaderboard()
             
             print("Leaderboard fetcher started. Waiting for completion...")
             completed = coordinator.wait_for_completion(timeout=args.timeout)

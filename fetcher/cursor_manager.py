@@ -37,9 +37,10 @@ class PriceCursor:
     start_ts: int = 0
     end_ts: int = 0
     pending_tokens: List[tuple] = field(default_factory=list)  # List of (token_id, market_start_ts)
+    completed: bool = False
     
     def is_empty(self) -> bool:
-        return not self.token_id and not self.pending_tokens
+        return not self.token_id and not self.pending_tokens and not self.completed
 
 
 @dataclass
@@ -173,7 +174,8 @@ class CursorManager:
                         token_id=price_data.get('token_id', ''),
                         start_ts=price_data.get('start_ts', 0),
                         end_ts=price_data.get('end_ts', 0),
-                        pending_tokens=pending_tokens
+                        pending_tokens=pending_tokens,
+                        completed=price_data.get('completed', False)
                     )
                     
                     # Parse leaderboard cursor
@@ -226,7 +228,8 @@ class CursorManager:
                     'token_id': self._cursors.prices.token_id,
                     'start_ts': self._cursors.prices.start_ts,
                     'end_ts': self._cursors.prices.end_ts,
-                    'pending_tokens': self._cursors.prices.pending_tokens
+                    'pending_tokens': self._cursors.prices.pending_tokens,
+                    'completed': self._cursors.prices.completed
                 },
                 'leaderboard': {
                     'current_category_index': self._cursors.leaderboard.current_category_index,
@@ -306,7 +309,8 @@ class CursorManager:
         token_id: str,
         start_ts: int,
         end_ts: int,
-        pending_tokens: Optional[List[tuple]] = None
+        pending_tokens: Optional[List[tuple]] = None,
+        completed: bool = False
     ) -> None:
         """Update the price cursor."""
         with self._lock:
@@ -315,6 +319,7 @@ class CursorManager:
             self._cursors.prices.end_ts = end_ts
             if pending_tokens is not None:
                 self._cursors.prices.pending_tokens = pending_tokens
+            self._cursors.prices.completed = completed
             self._dirty = True
     
     def get_price_cursor(self) -> PriceCursor:
@@ -324,7 +329,8 @@ class CursorManager:
                 token_id=self._cursors.prices.token_id,
                 start_ts=self._cursors.prices.start_ts,
                 end_ts=self._cursors.prices.end_ts,
-                pending_tokens=list(self._cursors.prices.pending_tokens)
+                pending_tokens=list(self._cursors.prices.pending_tokens),
+                completed=self._cursors.prices.completed
             )
     
     def clear_price_cursor(self) -> None:
