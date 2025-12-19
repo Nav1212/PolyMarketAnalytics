@@ -376,7 +376,6 @@ class LeaderboardFetcher:
         worker_id: int,
         output_queue: Union[Queue, SwappableQueue],
         trader_queue: Optional[Union[Queue, SwappableQueue]] = None,
-        stop_event: Optional[threading.Event] = None
     ):
         """
         Worker thread that fetches leaderboard data for all enum combinations.
@@ -399,7 +398,6 @@ class LeaderboardFetcher:
         self,
         output_queue: Union[Queue, SwappableQueue],
         trader_queue: Optional[Union[Queue, SwappableQueue]] = None,
-        num_workers: int = 1,
         stop_event: Optional[threading.Event] = None
     ) -> List[threading.Thread]:
         """

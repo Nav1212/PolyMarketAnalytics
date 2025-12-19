@@ -284,7 +284,6 @@ class FetcherCoordinator:
         # LeaderboardFetcher - has its own run_workers
         leaderboard_threads = self._leaderboard_fetcher.run_workers(
             output_queue=self._leaderboard_output_queue,
-            num_workers=leaderboard_workers
         )
         self._worker_threads.extend(leaderboard_threads)
         
@@ -529,7 +528,6 @@ class FetcherCoordinator:
         
         leaderboard_threads = self._leaderboard_fetcher.run_workers(
             output_queue=output_queue,
-            num_workers=num_workers
         )
         self._worker_threads.extend(leaderboard_threads)
         
