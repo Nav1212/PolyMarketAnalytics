@@ -21,12 +21,12 @@ def pytest_configure(config):
         "markers", "integration: marks tests as integration tests (may make real API calls)"
     )
 
-# Add fetcher module to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "fetcher"))
+# Add project root to path for fetcher package imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config import Config, RateLimitsConfig, QueuesConfig, OutputDirsConfig, ApiConfig, WorkersConfig
-from swappable_queue import SwappableQueue
-from worker_manager import WorkerManager
+from fetcher.config import Config, RateLimitsConfig, QueuesConfig, OutputDirsConfig, ApiConfig, WorkersConfig
+from fetcher.persistence import SwappableQueue
+from fetcher.workers import WorkerManager
 
 
 # =============================================================================
@@ -243,5 +243,5 @@ def cleanup_global_state():
     """Clean up global state after each test."""
     yield
     # Reset global worker manager
-    from worker_manager import set_worker_manager
+    from fetcher.workers import set_worker_manager
     set_worker_manager(None)

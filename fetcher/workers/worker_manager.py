@@ -10,7 +10,7 @@ from collections import deque
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from config import Config
+    from fetcher.config import Config
 
 
 class TokenBucket:

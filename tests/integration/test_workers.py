@@ -25,8 +25,8 @@ class TestMarketFetcherWorker:
     
     def test_worker_fetches_markets(self, test_config, worker_manager):
         """Verify worker fetches markets and puts them in output queue."""
-        from market_fetcher import MarketFetcher
-        from swappable_queue import SwappableQueue
+        from fetcher.workers import MarketFetcher
+        from fetcher.persistence import SwappableQueue
         
         output_queue = SwappableQueue(threshold=1000)
         fetcher = MarketFetcher(
@@ -58,8 +58,8 @@ class TestMarketFetcherWorker:
     
     def test_worker_feeds_downstream_queues(self, test_config, worker_manager):
         """Verify worker feeds trade, price, and leaderboard queues."""
-        from market_fetcher import MarketFetcher
-        from swappable_queue import SwappableQueue
+        from fetcher.workers import MarketFetcher
+        from fetcher.persistence import SwappableQueue
         
         output_queue = SwappableQueue(threshold=1000)
         trade_queue = Queue()
@@ -108,8 +108,8 @@ class TestMarketFetcherWorker:
     
     def test_worker_sends_shutdown_signals(self, test_config, worker_manager):
         """Verify worker sends sentinel values on completion."""
-        from market_fetcher import MarketFetcher
-        from swappable_queue import SwappableQueue
+        from fetcher.workers import MarketFetcher
+        from fetcher.persistence import SwappableQueue
         
         output_queue = SwappableQueue(threshold=1000)
         trade_queue = Queue()
@@ -170,8 +170,8 @@ class TestTradeFetcherWorker:
     
     def test_worker_fetches_trades_for_market(self, test_config, worker_manager, sample_market_id):
         """Verify worker fetches trades for a given market."""
-        from trade_fetcher import TradeFetcher
-        from swappable_queue import SwappableQueue
+        from fetcher.workers import TradeFetcher
+        from fetcher.persistence import SwappableQueue
         
         market_queue = Queue()
         output_queue = SwappableQueue(threshold=1000)
@@ -203,8 +203,8 @@ class TestTradeFetcherWorker:
     
     def test_worker_handles_empty_queue_gracefully(self, test_config, worker_manager):
         """Verify worker handles sentinel value correctly."""
-        from trade_fetcher import TradeFetcher
-        from swappable_queue import SwappableQueue
+        from fetcher.workers import TradeFetcher
+        from fetcher.persistence import SwappableQueue
         
         market_queue = Queue()
         output_queue = SwappableQueue(threshold=1000)
@@ -231,7 +231,7 @@ class TestTradeFetcherWorker:
     
     def test_worker_with_regular_queue(self, test_config, worker_manager, sample_market_id):
         """Verify worker works with regular Queue output."""
-        from trade_fetcher import TradeFetcher
+        from fetcher.workers import TradeFetcher
         
         market_queue = Queue()
         output_queue = Queue()
@@ -294,8 +294,8 @@ class TestPriceFetcherWorker:
     
     def test_worker_fetches_prices_for_token(self, test_config, worker_manager, sample_token_id):
         """Verify worker fetches price history for a token."""
-        from price_fetcher import PriceFetcher
-        from swappable_queue import SwappableQueue
+        from fetcher.workers import PriceFetcher
+        from fetcher.persistence import SwappableQueue
         import time as time_module
         
         token_queue = Queue()
@@ -328,8 +328,8 @@ class TestPriceFetcherWorker:
     
     def test_worker_handles_string_token_format(self, test_config, worker_manager, sample_token_id):
         """Verify worker handles legacy string format for tokens."""
-        from price_fetcher import PriceFetcher
-        from swappable_queue import SwappableQueue
+        from fetcher.workers import PriceFetcher
+        from fetcher.persistence import SwappableQueue
         import time as time_module
         
         token_queue = Queue()
@@ -384,7 +384,8 @@ class TestLeaderboardFetcherWorker:
     
     def test_fetch_leaderboard_single_page(self, test_config, worker_manager):
         """Verify fetching a single page of leaderboard data works."""
-        from leaderboard_fetcher import LeaderboardFetcher, LeaderboardCategory, LeaderboardTimePeriod
+        from fetcher.workers import LeaderboardFetcher
+        from fetcher.workers.leaderboard_fetcher import LeaderboardCategory, LeaderboardTimePeriod
         
         fetcher = LeaderboardFetcher(
             worker_manager=worker_manager,
@@ -406,8 +407,9 @@ class TestLeaderboardFetcherWorker:
     
     def test_worker_processes_enum_combinations(self, test_config, worker_manager):
         """Verify worker processes enum combinations (with mock to limit combinations)."""
-        from leaderboard_fetcher import LeaderboardFetcher, LeaderboardCategory, LeaderboardTimePeriod
-        from swappable_queue import SwappableQueue
+        from fetcher.workers import LeaderboardFetcher
+        from fetcher.workers.leaderboard_fetcher import LeaderboardCategory, LeaderboardTimePeriod
+        from fetcher.persistence import SwappableQueue
         from unittest.mock import patch
         
         output_queue = SwappableQueue(threshold=1000)
@@ -436,7 +438,8 @@ class TestLeaderboardFetcherWorker:
     
     def test_worker_with_regular_queue(self, test_config, worker_manager):
         """Verify worker works with regular Queue output."""
-        from leaderboard_fetcher import LeaderboardFetcher, LeaderboardCategory, LeaderboardTimePeriod
+        from fetcher.workers import LeaderboardFetcher
+        from fetcher.workers.leaderboard_fetcher import LeaderboardCategory, LeaderboardTimePeriod
         from unittest.mock import patch
         
         output_queue = Queue()
@@ -467,8 +470,9 @@ class TestLeaderboardFetcherWorker:
     
     def test_worker_handles_empty_leaderboard(self, test_config, worker_manager):
         """Verify worker handles empty leaderboard data gracefully."""
-        from leaderboard_fetcher import LeaderboardFetcher, LeaderboardCategory, LeaderboardTimePeriod
-        from swappable_queue import SwappableQueue
+        from fetcher.workers import LeaderboardFetcher
+        from fetcher.workers.leaderboard_fetcher import LeaderboardCategory, LeaderboardTimePeriod
+        from fetcher.persistence import SwappableQueue
         from unittest.mock import patch
         
         output_queue = SwappableQueue(threshold=1000)
@@ -498,8 +502,8 @@ class TestWorkerParquetIntegration:
     
     def test_trade_worker_with_persisted_queue(self, test_config, worker_manager, temp_parquet_dir):
         """Verify trades are persisted to parquet files."""
-        from trade_fetcher import TradeFetcher
-        from parquet_persister import create_trade_persisted_queue
+        from fetcher.workers import TradeFetcher
+        from fetcher.persistence import create_trade_persisted_queue
         import httpx
         
         # Get a sample market
@@ -547,8 +551,9 @@ class TestWorkerParquetIntegration:
     
     def test_leaderboard_worker_with_persisted_queue(self, test_config, worker_manager, temp_parquet_dir):
         """Verify leaderboard data is persisted to parquet files."""
-        from leaderboard_fetcher import LeaderboardFetcher, LeaderboardCategory, LeaderboardTimePeriod
-        from parquet_persister import create_leaderboard_persisted_queue
+        from fetcher.workers import LeaderboardFetcher
+        from fetcher.workers.leaderboard_fetcher import LeaderboardCategory, LeaderboardTimePeriod
+        from fetcher.persistence import create_leaderboard_persisted_queue
         from unittest.mock import patch
         
         output_queue, persister = create_leaderboard_persisted_queue(
@@ -595,8 +600,8 @@ class TestMultipleWorkersCoordination:
     
     def test_multiple_trade_workers(self, test_config, worker_manager):
         """Verify multiple trade workers can run in parallel."""
-        from trade_fetcher import TradeFetcher
-        from swappable_queue import SwappableQueue
+        from fetcher.workers import TradeFetcher
+        from fetcher.persistence import SwappableQueue
         import httpx
         
         # Get sample markets
@@ -649,8 +654,9 @@ class TestMultipleWorkersCoordination:
     
     def test_multiple_leaderboard_workers(self, test_config, worker_manager):
         """Verify leaderboard worker runs with enum iteration (single worker since not queue-based)."""
-        from leaderboard_fetcher import LeaderboardFetcher, LeaderboardCategory, LeaderboardTimePeriod
-        from swappable_queue import SwappableQueue
+        from fetcher.workers import LeaderboardFetcher
+        from fetcher.workers.leaderboard_fetcher import LeaderboardCategory, LeaderboardTimePeriod
+        from fetcher.persistence import SwappableQueue
         from unittest.mock import patch
         
         output_queue = SwappableQueue(threshold=1000)

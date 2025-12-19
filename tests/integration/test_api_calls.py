@@ -163,7 +163,7 @@ class TestTradeFetcherIntegration:
     
     def test_trade_fetcher_fetch_trades(self, test_config, worker_manager):
         """Test TradeFetcher can fetch real trades."""
-        from trade_fetcher import TradeFetcher
+        from fetcher.workers import TradeFetcher
         
         with TradeFetcher(
             config=test_config,
@@ -179,7 +179,7 @@ class TestTradeFetcherIntegration:
     
     def test_trade_fetcher_handles_invalid_market(self, test_config, worker_manager):
         """Test TradeFetcher handles invalid market gracefully."""
-        from trade_fetcher import TradeFetcher
+        from fetcher.workers import TradeFetcher
         
         with TradeFetcher(
             config=test_config,

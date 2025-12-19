@@ -11,10 +11,10 @@ from typing import List, Dict, Any, Generator, Union, Optional
 from queue import Queue, Empty
 import time
 
-from swappable_queue import SwappableQueue
-from worker_manager import WorkerManager, get_worker_manager
-from config import get_config, Config
-from cursor_manager import CursorManager, get_cursor_manager
+from fetcher.persistence.swappable_queue import SwappableQueue
+from fetcher.workers.worker_manager import WorkerManager, get_worker_manager
+from fetcher.config import get_config, Config
+from fetcher.cursors.manager import CursorManager, get_cursor_manager
 
 
 class LeaderboardCategory(str, Enum):

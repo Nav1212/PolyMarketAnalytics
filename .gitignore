@@ -2,6 +2,10 @@
 data/
 *.parquet
 
+# State/cursor files (runtime data)
+fetcher/downstream_queues.json
+fetcher/cursor.json
+
 # Python
 __pycache__/
 *.py[cod]

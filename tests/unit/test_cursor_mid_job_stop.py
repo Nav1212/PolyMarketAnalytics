@@ -22,12 +22,12 @@ from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock, PropertyMock
 from typing import List, Dict, Any
 
-# Add fetcher to path
+# Add project root to path for fetcher package imports
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "fetcher"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from cursor_manager import CursorManager, TradeCursor, LeaderboardCursor, PriceCursor, MarketCursor
-from swappable_queue import SwappableQueue
+from fetcher.cursors import CursorManager, TradeCursor, LeaderboardCursor, PriceCursor, MarketCursor
+from fetcher.persistence import SwappableQueue
 
 
 class TestTradeWorkerMidJobStop:

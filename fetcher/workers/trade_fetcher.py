@@ -11,23 +11,21 @@ import random
 import threading
 import time
 
-from swappable_queue import SwappableQueue
-from utils.logging_config import get_logger
-from utils.exceptions import (
+from fetcher.persistence.swappable_queue import SwappableQueue
+from fetcher.utils.logging_config import get_logger
+from fetcher.utils.exceptions import (
     PolymarketAPIError,
     RateLimitExceededError,
     NetworkTimeoutError,
 )
-from utils.retry import retry
+from fetcher.utils.retry import retry
 
 logger = get_logger("trade_fetcher")
 
-from parquet_persister import (
-    ParquetPersister 
-)
-from worker_manager import WorkerManager, get_worker_manager
-from config import get_config, Config
-from cursor_manager import CursorManager, get_cursor_manager
+from fetcher.persistence.parquet_persister import ParquetPersister
+from fetcher.workers.worker_manager import WorkerManager, get_worker_manager
+from fetcher.config import get_config, Config
+from fetcher.cursors.manager import CursorManager, get_cursor_manager
 
 
 class TradeFetcher:

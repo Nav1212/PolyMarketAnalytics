@@ -21,7 +21,7 @@ class TestParquetWrite:
     
     def test_write_trades_to_parquet(self, sample_trades, temp_parquet_dir):
         """Test writing trade data to a parquet file."""
-        from parquet_persister import TRADE_SCHEMA
+        from fetcher.persistence import TRADE_SCHEMA
         
         # Convert trades to PyArrow table
         arrays = {
@@ -50,7 +50,7 @@ class TestParquetWrite:
     
     def test_write_with_hive_partitioning(self, sample_trades, temp_parquet_dir):
         """Test writing with Hive-style date partitioning."""
-        from parquet_persister import TRADE_SCHEMA
+        from fetcher.persistence import TRADE_SCHEMA
         
         # Create partition directory
         today = datetime.now().strftime("%Y-%m-%d")
@@ -84,7 +84,8 @@ class TestParquetRead:
     
     def test_load_parquet_data(self, sample_trades, temp_parquet_dir):
         """Test loading data from parquet using DuckDB."""
-        from parquet_persister import TRADE_SCHEMA, load_parquet_data
+        from fetcher.persistence import TRADE_SCHEMA
+        from fetcher.persistence.parquet_persister import load_parquet_data
         
         # First write some data
         arrays = {
@@ -110,7 +111,8 @@ class TestParquetRead:
     
     def test_load_parquet_with_query(self, sample_trades, temp_parquet_dir):
         """Test loading parquet data with SQL query."""
-        from parquet_persister import TRADE_SCHEMA, load_parquet_data
+        from fetcher.persistence import TRADE_SCHEMA
+        from fetcher.persistence.parquet_persister import load_parquet_data
         
         # Write data
         arrays = {
@@ -135,7 +137,7 @@ class TestParquetRead:
     
     def test_load_nonexistent_path_returns_empty(self):
         """Test that loading from nonexistent path returns empty list."""
-        from parquet_persister import load_parquet_data
+        from fetcher.persistence.parquet_persister import load_parquet_data
         
         result = load_parquet_data("/nonexistent/path/to/data")
         assert result == []
@@ -146,7 +148,7 @@ class TestCursorOperations:
     
     def test_save_and_load_cursor(self, temp_parquet_dir):
         """Test saving and loading cursor data."""
-        from parquet_persister import save_cursor, load_cursor
+        from fetcher.persistence.parquet_persister import save_cursor, load_cursor
         
         cursor_data = {
             "last_timestamp": 1702300800,
@@ -168,7 +170,7 @@ class TestCursorOperations:
     
     def test_load_cursor_nonexistent_returns_none(self, temp_parquet_dir):
         """Test that loading nonexistent cursor returns None."""
-        from parquet_persister import load_cursor
+        from fetcher.persistence.parquet_persister import load_cursor
         
         result = load_cursor(str(temp_parquet_dir / "nonexistent"))
         assert result is None
@@ -179,8 +181,7 @@ class TestParquetPersisterIntegration:
     
     def test_persister_writes_on_threshold(self, temp_parquet_dir, sample_trades):
         """Test that ParquetPersister writes when threshold is reached."""
-        from parquet_persister import ParquetPersister, DataType
-        from swappable_queue import SwappableQueue
+        from fetcher.persistence import ParquetPersister, DataType, SwappableQueue
         
         # Small threshold for testing
         queue = SwappableQueue(threshold=10)
@@ -211,8 +212,7 @@ class TestParquetPersisterIntegration:
     
     def test_persister_flushes_on_stop(self, temp_parquet_dir, sample_trades):
         """Test that ParquetPersister flushes remaining items on stop."""
-        from parquet_persister import ParquetPersister, DataType
-        from swappable_queue import SwappableQueue
+        from fetcher.persistence import ParquetPersister, DataType, SwappableQueue
         
         # Threshold higher than items we'll add
         queue = SwappableQueue(threshold=100)

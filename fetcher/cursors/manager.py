@@ -102,13 +102,14 @@ class CursorManager:
         Initialize the cursor manager.
         
         Args:
-            cursor_file: Path to cursor file (default: fetcher/cursor.json)
+            cursor_file: Path to cursor file (default: fetcher/cursor.json for backwards compatibility)
             auto_save: Whether to register shutdown handlers for auto-save
             enabled: Whether cursor persistence is enabled
         """
         self._enabled = enabled
         if cursor_file is None:
-            self._cursor_file = Path(__file__).parent / "cursor.json"
+            # Default to fetcher root for backwards compatibility
+            self._cursor_file = Path(__file__).parent.parent / "cursor.json"
         else:
             self._cursor_file = Path(cursor_file)
         

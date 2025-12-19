@@ -24,29 +24,33 @@ from typing import Optional, List, Dict, Any, Union
 
 import time
 
-from config import Config, get_config
-from worker_manager import WorkerManager, get_worker_manager, set_worker_manager
-from swappable_queue import SwappableQueue
-from market_fetcher import MarketFetcher
-from trade_fetcher import TradeFetcher
-from price_fetcher import PriceFetcher
-from leaderboard_fetcher import LeaderboardFetcher
-from parquet_persister import (
+from fetcher.config import Config, get_config
+from fetcher.workers import (
+    WorkerManager, 
+    get_worker_manager, 
+    set_worker_manager,
+    MarketFetcher,
+    TradeFetcher,
+    # PriceFetcher,  # Commented out - price fetcher disabled
+    LeaderboardFetcher,
+)
+from fetcher.persistence import (
+    SwappableQueue,
     ParquetPersister,
     create_market_persisted_queue,
     create_market_token_persisted_queue,
     create_trade_persisted_queue,
-    create_price_persisted_queue,
+    # create_price_persisted_queue,  # Commented out - price fetcher disabled
     create_leaderboard_persisted_queue,
-    DataType
+    DataType,
 )
-from cursor_manager import (
+from fetcher.cursors import (
     CursorManager, 
     get_cursor_manager, 
     set_cursor_manager,
     TradeCursor,
     PriceCursor,
-    LeaderboardCursor
+    LeaderboardCursor,
 )
 
 
@@ -114,7 +118,7 @@ class FetcherCoordinator:
         # Fetcher instances
         self._market_fetcher: Optional[MarketFetcher] = None
         self._trade_fetcher: Optional[TradeFetcher] = None
-        self._price_fetcher: Optional[PriceFetcher] = None
+        # self._price_fetcher: Optional[PriceFetcher] = None  # Commented out - price fetcher disabled
         self._leaderboard_fetcher: Optional[LeaderboardFetcher] = None
         
         # Parquet persisters
@@ -157,12 +161,13 @@ class FetcherCoordinator:
                 auto_start=True
             )
             
-            # Prices: persisted to parquet
-            self._price_output_queue, self._price_persister = create_price_persisted_queue(
-                threshold=self._config.queues.price_threshold,
-                output_dir=self._config.output_dirs.price,
-                auto_start=True
-            )
+            # Prices: commented out - price fetcher disabled
+            # self._price_output_queue, self._price_persister = create_price_persisted_queue(
+            #     threshold=self._config.queues.price_threshold,
+            #     output_dir=self._config.output_dirs.price,
+            #     auto_start=True
+            # )
+            self._price_output_queue = Queue()  # Use simple queue as placeholder
             
             # Leaderboard: persisted to parquet
             self._leaderboard_output_queue, self._leaderboard_persister = create_leaderboard_persisted_queue(
@@ -193,10 +198,10 @@ class FetcherCoordinator:
             market_queue=self._trade_market_queue
         )
         
-        # PriceFetcher consumes from price_token_queue
-        self._price_fetcher = PriceFetcher(
-            market_queue=self._price_token_queue
-        )
+        # PriceFetcher commented out - price fetcher disabled
+        # self._price_fetcher = PriceFetcher(
+        #     market_queue=self._price_token_queue
+        # )
         
         # LeaderboardFetcher consumes from leaderboard_market_queue
         self._leaderboard_fetcher = LeaderboardFetcher(
@@ -232,7 +237,7 @@ class FetcherCoordinator:
         # Ensure fetchers and queues are created (for type checker)
         assert self._market_fetcher is not None
         assert self._trade_fetcher is not None
-        assert self._price_fetcher is not None
+        # assert self._price_fetcher is not None  # Commented out - price fetcher disabled
         assert self._leaderboard_fetcher is not None
         assert self._leaderboard_market_queue is not None
         assert self._leaderboard_output_queue is not None
@@ -242,7 +247,7 @@ class FetcherCoordinator:
         # Get worker counts from config
         market_workers = self._config.workers.market
         trade_workers = self._config.workers.trade
-        price_workers = self._config.workers.price
+        # price_workers = self._config.workers.price  # Commented out - price fetcher disabled
         leaderboard_workers = self._config.workers.leaderboard
         
         print(f"Starting parallel fetch pipeline...")
@@ -271,15 +276,15 @@ class FetcherCoordinator:
             t.start()
             self._worker_threads.append(t)
         
-        # PriceFetcher workers
-        for i in range(price_workers):
-            t = Thread(
-                target=self._price_fetcher._worker,
-                args=(i, self._price_output_queue, start_time, end_time),
-                name=f"PriceFetcher-Worker-{i}"
-            )
-            t.start()
-            self._worker_threads.append(t)
+        # PriceFetcher workers - COMMENTED OUT: price fetcher disabled
+        # for i in range(price_workers):
+        #     t = Thread(
+        #         target=self._price_fetcher._worker,
+        #         args=(i, self._price_output_queue, start_time, end_time),
+        #         name=f"PriceFetcher-Worker-{i}"
+        #     )
+        #     t.start()
+        #     self._worker_threads.append(t)
         
         # LeaderboardFetcher - has its own run_workers
         leaderboard_threads = self._leaderboard_fetcher.run_workers(
@@ -290,7 +295,7 @@ class FetcherCoordinator:
         print(f"All fetchers started in parallel mode:")
         print(f"  - MarketFetcher: {market_workers} workers → persisting to {self._config.output_dirs.market}")
         print(f"  - TradeFetcher: {trade_workers} workers → persisting to {self._config.output_dirs.trade}")
-        print(f"  - PriceFetcher: {price_workers} workers → persisting to {self._config.output_dirs.price}")
+        print(f"  - PriceFetcher: DISABLED")
         print(f"  - LeaderboardFetcher: {leaderboard_workers} workers")
         
         return {
@@ -411,81 +416,20 @@ class FetcherCoordinator:
         
         return output_queue
     
-    def run_prices(
-        self,
-        token_ids: List[str],
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
-        num_workers: Optional[int] = None,
-        use_swappable: bool = True
-    ) -> Union[Queue, SwappableQueue]:
-        """
-        Run only PriceFetcher for specific token IDs.
-        
-        Args:
-            token_ids: List of token IDs to fetch prices for
-            start_time: Start timestamp filter
-            end_time: End timestamp filter
-            num_workers: Number of worker threads (default from config)
-            use_swappable: Use SwappableQueue for output
-        
-        Returns:
-            Output queue containing price data
-        """
-        num_workers = num_workers or self._config.workers.price
-        
-        # Check for existing cursor to resume from
-        price_cursor = self._cursor_manager.get_price_cursor()
-        
-        # Create input queue
-        input_queue = Queue()
-        
-        if not price_cursor.is_empty() and price_cursor.pending_tokens:
-            # Resume from cursor - use pending tokens from cursor
-            print(f"Resuming prices from cursor: {len(price_cursor.pending_tokens)} tokens pending")
-            resume_tokens = price_cursor.pending_tokens
-        else:
-            # Fresh start - convert token_ids to tuple format (token_id, None)
-            resume_tokens = [(tid, None) if isinstance(tid, str) else tid for tid in token_ids]
-        
-        # Store pending tokens in cursor for tracking
-        self._cursor_manager.update_price_cursor(
-            token_id=price_cursor.token_id if not price_cursor.is_empty() else "",
-            start_ts=start_time or 0,
-            end_ts=end_time or 0,
-            pending_tokens=list(resume_tokens)
-        )
-        
-        # Populate queue with token IDs
-        for token_item in resume_tokens:
-            input_queue.put(token_item)
-        
-        # Add sentinel values for each worker
-        for _ in range(num_workers):
-            input_queue.put(None)
-        
-        # Create output queue
-        if use_swappable:
-            output_queue = SwappableQueue()
-        else:
-            output_queue = Queue()
-        
-        # Create fetcher with cursor manager and start workers
-        self._price_fetcher = PriceFetcher(
-            market_queue=input_queue,
-            cursor_manager=self._cursor_manager
-        )
-        
-        for i in range(num_workers):
-            t = Thread(
-                target=self._price_fetcher._worker,
-                args=(i, output_queue, start_time, end_time),
-                name=f"PriceFetcher-Worker-{i}"
-            )
-            t.start()
-            self._worker_threads.append(t)
-        
-        return output_queue
+    # def run_prices(
+    #     self,
+    #     token_ids: List[str],
+    #     start_time: Optional[int] = None,
+    #     end_time: Optional[int] = None,
+    #     num_workers: Optional[int] = None,
+    #     use_swappable: bool = True
+    # ) -> Union[Queue, SwappableQueue]:
+    #     """
+    #     Run only PriceFetcher for specific token IDs.
+    #     
+    #     COMMENTED OUT: Price fetcher is currently disabled.
+    #     """
+    #     pass
     
     def run_leaderboard(
         self,

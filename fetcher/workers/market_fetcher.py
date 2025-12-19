@@ -15,11 +15,12 @@ import threading
 import time
 from py_clob_client.client import ClobClient
 from py_clob_client.exceptions import PolyApiException
-from swappable_queue import SwappableQueue
-from parquet_persister import ParquetPersister, create_market_persisted_queue
-from worker_manager import WorkerManager, get_worker_manager
-from config import get_config, Config
-from cursor_manager import CursorManager, get_cursor_manager
+
+from fetcher.persistence.swappable_queue import SwappableQueue
+from fetcher.persistence.parquet_persister import ParquetPersister, create_market_persisted_queue
+from fetcher.workers.worker_manager import WorkerManager, get_worker_manager
+from fetcher.config import get_config, Config
+from fetcher.cursors.manager import CursorManager, get_cursor_manager
 
 
 # Sentinel cursor value that signals end of pagination (base64 encoded "-1")
@@ -388,7 +389,7 @@ class MarketFetcher:
     
     def _send_shutdown_signals(self) -> None:
         """Send None sentinels to downstream queues and save queue state to disk."""
-        from config import get_config
+        from fetcher.config import get_config
         config = get_config()
         
         # Save downstream queue contents before sending sentinels
@@ -435,7 +436,7 @@ class MarketFetcher:
             ]
         
         # Save to file
-        queue_file = Path(__file__).parent / "downstream_queues.json"
+        queue_file = Path(__file__).parent.parent / "downstream_queues.json"
         try:
             with open(queue_file, 'w') as f:
                 json.dump(queue_state, f, indent=2)
@@ -450,7 +451,7 @@ class MarketFetcher:
         Returns:
             True if queues were restored, False if no saved state
         """
-        queue_file = Path(__file__).parent / "downstream_queues.json"
+        queue_file = Path(__file__).parent.parent / "downstream_queues.json"
         if not queue_file.exists():
             return False
         

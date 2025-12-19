@@ -17,10 +17,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import duckdb
 
-from swappable_queue import SwappableQueue
+from fetcher.persistence.swappable_queue import SwappableQueue
 from enum import Enum
-from utils.logging_config import get_logger
-from utils.exceptions import ParquetWriteError, CursorError
+from fetcher.utils.logging_config import get_logger
+from fetcher.utils.exceptions import ParquetWriteError, CursorError
 
 logger = get_logger("parquet_persister")
 
@@ -512,6 +512,7 @@ class ParquetPersister:
             )
             # Consider retry logic or dead-letter queue
             raise ParquetWriteError(f"Failed to write trades: {e}", file_path=str(filepath) if 'filepath' in locals() else None)
+    
     def _write_market_token_parquet(self, items: List[Dict[str, Any]]) -> None:
         """
         Write a batch of items to a parquet file.
@@ -569,6 +570,7 @@ class ParquetPersister:
                 f"Error writing market_token parquet: {e}",
                 extra={"filepath": str(filepath) if 'filepath' in locals() else None}
             )
+    
     def _write_market_parquet(self, items: List[Dict[str, Any]]) -> None:
         """
         Write a batch of items to a parquet file.

@@ -7,8 +7,8 @@ Contains shared utilities:
 - retry: Retry decorator with exponential backoff
 """
 
-from utils.logging_config import get_logger, setup_logging, LogContext
-from utils.exceptions import (
+from fetcher.utils.logging_config import get_logger, setup_logging, LogContext
+from fetcher.utils.exceptions import (
     PolymarketError,
     PolymarketAPIError,
     RateLimitExceededError,
@@ -18,7 +18,7 @@ from utils.exceptions import (
     ParquetWriteError,
     DatabaseError,
 )
-from utils.retry import retry, retry_async, RetryContext
+from fetcher.utils.retry import retry, retry_async, RetryContext
 
 __all__ = [
     # Logging
