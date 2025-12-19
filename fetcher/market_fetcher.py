@@ -14,11 +14,16 @@ from queue import Queue, Empty
 import threading
 import time
 from py_clob_client.client import ClobClient
+from py_clob_client.exceptions import PolyApiException
 from swappable_queue import SwappableQueue
 from parquet_persister import ParquetPersister, create_market_persisted_queue
 from worker_manager import WorkerManager, get_worker_manager
 from config import get_config, Config
 from cursor_manager import CursorManager, get_cursor_manager
+
+
+# Sentinel cursor value that signals end of pagination (base64 encoded "-1")
+END_OF_PAGINATION_CURSOR = "LTE="
 
 
 class MarketFetcher:
@@ -229,6 +234,21 @@ class MarketFetcher:
         print(f"Total markets fetched and persisted: {total_markets}")
         return market_queue
     
+    def _is_end_of_pagination(self, cursor: Optional[str]) -> bool:
+        """
+        Check if cursor signals end of pagination.
+        
+        The Polymarket API returns cursor "LTE=" (base64 for "-1") on the last page.
+        Using this cursor will cause a 400 error.
+        
+        Args:
+            cursor: The next_cursor value from API response
+            
+        Returns:
+            True if this cursor signals end of data
+        """
+        return cursor == END_OF_PAGINATION_CURSOR
+    
     def _worker(
         self,
         worker_id: int,
@@ -244,7 +264,6 @@ class MarketFetcher:
             stop_event: Optional event to signal stop
         """
         is_swappable = isinstance(output_queue, SwappableQueue)
-        next_cursor = None
         total_markets = 0
         
         # Retry configuration
@@ -253,7 +272,20 @@ class MarketFetcher:
         max_delay = self._config.retry.max_delay
         exponential_base = self._config.retry.exponential_base
         
-        print(f"[Market Worker {worker_id}] Starting market fetch...")
+        # Check for existing cursor to resume from
+        market_cursor = self._cursor_manager.get_market_cursor()
+        if market_cursor.completed:
+            print(f"[Market Worker {worker_id}] Markets already completed in previous run, skipping...")
+            self._send_shutdown_signals()
+            return
+        
+        next_cursor = market_cursor.next_cursor if market_cursor.next_cursor else None
+        if next_cursor:
+            print(f"[Market Worker {worker_id}] Resuming from cursor: {next_cursor}")
+        else:
+            print(f"[Market Worker {worker_id}] Starting market fetch from beginning...")
+        
+        batch = []  # Initialize batch for scope
         
         while stop_event is None or not stop_event.is_set():
             loop_start = time.time()
@@ -262,18 +294,28 @@ class MarketFetcher:
             # Retry loop for each API call
             attempt = 0
             success = False
+            end_of_data = False
             
             while attempt < max_attempts and not success:
                 attempt += 1
                 try:
                     response: Dict[str, Any] = self.client.get_markets(next_cursor=next_cursor) if next_cursor else self.client.get_markets()  # type: ignore[assignment]
                     batch = response.get("data", [])
-                    next_cursor = response.get("next_cursor")
+                    new_cursor = response.get("next_cursor")
                     
-                    if not batch:
-                        # No more markets - exit the main loop
+                    # Check for end of pagination conditions:
+                    # 1. Empty batch
+                    # 2. Cursor is the sentinel value "LTE=" (base64 "-1")
+                    if not batch or batch == []:
+                        print(f"[Market Worker {worker_id}] Empty batch received - end of data")
+                        end_of_data = True
                         success = True
                         break
+                    
+                    if self._is_end_of_pagination(new_cursor):
+                        # This is the last batch - process it but don't try to fetch more
+                        print(f"[Market Worker {worker_id}] Last page reached (cursor={new_cursor})")
+                        end_of_data = True
                     
                     # Enqueue for downstream fetchers
                     self._enqueue_markets_for_fetchers(batch)
@@ -287,8 +329,33 @@ class MarketFetcher:
                     
                     total_markets += len(batch)
                     print(f"[Market Worker {worker_id}] Fetched {len(batch)} markets (total: {total_markets})")
+                    
+                    # Update cursor for next iteration (and for crash recovery)
+                    next_cursor = new_cursor
+                    if not end_of_data:
+                        self._cursor_manager.update_market_cursor(next_cursor or "", completed=False)
+                    
                     success = True
                     
+                except PolyApiException as e:
+                    # Check if this is the "end of pagination" error
+                    if e.status_code == 400 and "next item should be greater than or equal to 0" in str(e):
+                        print(f"[Market Worker {worker_id}] End of pagination reached (API returned 400)")
+                        end_of_data = True
+                        success = True
+                        break
+                    
+                    # Other API errors - retry
+                    if attempt < max_attempts:
+                        delay = min(base_delay * (exponential_base ** (attempt - 1)), max_delay)
+                        jitter = delay * 0.25 * (2 * random.random() - 1)
+                        sleep_time = delay + jitter
+                        print(f"[Market Worker {worker_id}] Attempt {attempt}/{max_attempts} failed: {e}. Retrying in {sleep_time:.1f}s...")
+                        time.sleep(sleep_time)
+                    else:
+                        print(f"[Market Worker {worker_id}] All {max_attempts} attempts failed: {e}")
+                        break
+                        
                 except Exception as e:
                     if attempt < max_attempts:
                         # Calculate delay with exponential backoff and jitter
@@ -303,9 +370,14 @@ class MarketFetcher:
                         # Exit the main loop after exhausting retries
                         break
             
-            # If we couldn't succeed after all retries, or no more data, exit
-            if not success or not batch:
+            # Exit conditions: couldn't succeed, end of data reached
+            if not success or end_of_data:
                 break
+        
+        # Mark cursor as completed on successful finish
+        if total_markets > 0:
+            self._cursor_manager.update_market_cursor("", completed=True)
+            print(f"[Market Worker {worker_id}] Marked market cursor as completed")
         
         # Send sentinel values to downstream fetchers to signal completion
         self._send_shutdown_signals()

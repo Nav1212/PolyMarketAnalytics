@@ -10,13 +10,15 @@
         "trade_threshold": 10000,
         "market_threshold": 1000,
         "market_token_threshold": 5000,
-        "price_threshold": 10000
+        "price_threshold": 10000,
+        "leaderboard_threshold": 5000
     },
     "output_dirs": {
         "trade": "data/trades",
         "market": "data/markets",
         "market_token": "data/market_tokens",
-        "price": "data/prices"
+        "price": "data/prices",
+        "leaderboard": "data/leaderboard"
     },
     "api": {
         "data_api_base": "https://data-api.polymarket.com",
