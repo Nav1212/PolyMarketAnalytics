@@ -8,7 +8,6 @@ from typing import List, Dict, Any, Union, Optional
 from datetime import datetime
 from queue import Queue, Empty
 import random
-import threading
 import time
 
 from swappable_queue import SwappableQueue
@@ -99,11 +98,23 @@ class PriceFetcher:
         if loop_start is None:
             loop_start = time.time()
         
+        now = int(datetime.now().timestamp())
+        
         if end_ts is None:
-            end_ts = int(datetime.now().timestamp())
+            end_ts = now
         if start_ts is None:
             # Default to 30 days ago if no start time provided
             start_ts = end_ts - (30 * 24 * 60 * 60)
+        
+        # Validate timestamps - cap end_ts at current time
+        if end_ts > now:
+            print(f"[PriceFetcher] Warning: end_ts ({end_ts}) is in the future, capping to now ({now})")
+            end_ts = now
+        
+        # Ensure start_ts is before end_ts
+        if start_ts >= end_ts:
+            print(f"[PriceFetcher] Warning: start_ts ({start_ts}) >= end_ts ({end_ts}), returning empty")
+            return []
         
         # Fetch in daily increments to avoid "interval too long" error
         DAY_SECONDS = 24 * 60 * 60
@@ -186,15 +197,18 @@ class PriceFetcher:
             return result
         
         except httpx.HTTPStatusError as e:
-            print(f"HTTP error fetching price history: {e.response.status_code} - {e.response.text}")
+            print(f"[PriceFetcher] HTTP error for token {token_id[:20]}...: {e.response.status_code} - {e.response.text}")
+            print(f"[PriceFetcher] Request params were: {params}")
             return []
         
         except httpx.RequestError as e:
-            print(f"Request error fetching price history: {e}")
+            print(f"[PriceFetcher] Request error for token {token_id[:20]}...: {e}")
+            print(f"[PriceFetcher] Request params were: {params}")
             return []
         
         except Exception as e:
-            print(f"Unexpected error fetching price history: {e}")
+            print(f"[PriceFetcher] Unexpected error for token {token_id[:20]}...: {e}")
+            print(f"[PriceFetcher] Request params were: {params}")
             return []
     
     def _worker(

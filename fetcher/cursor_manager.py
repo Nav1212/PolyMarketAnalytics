@@ -142,7 +142,7 @@ class CursorManager:
     
     def load_cursors(self) -> Cursors:
         """
-        Load cursors from file.
+        Load cursors from file. Creates the file with default values if it doesn't exist.
         
         Returns:
             Cursors object with loaded or default values
@@ -203,8 +203,56 @@ class CursorManager:
                 except (json.JSONDecodeError, KeyError) as e:
                     print(f"Warning: Could not parse cursor file: {e}")
                     self._cursors = Cursors()
+            else:
+                # File doesn't exist - create it with default values
+                print(f"Cursor file not found, creating: {self._cursor_file}")
+                self._cursors = Cursors()
+                self._dirty = True
+                self._create_default_cursor_file()
             
             return self._cursors
+    
+    def _create_default_cursor_file(self) -> None:
+        """Create cursor file with default empty values."""
+        data = {
+            'trades': {
+                'market': '',
+                'offset': 0,
+                'filter_amount': 0,
+                'pending_markets': []
+            },
+            'prices': {
+                'token_id': '',
+                'start_ts': 0,
+                'end_ts': 0,
+                'pending_tokens': [],
+                'completed': False
+            },
+            'leaderboard': {
+                'current_category_index': 0,
+                'current_time_period_index': 0,
+                'current_offset': 0,
+                'completed': False
+            },
+            'markets': {
+                'next_cursor': '',
+                'completed': False
+            },
+            'last_updated': datetime.now().isoformat()
+        }
+        
+        try:
+            # Ensure parent directory exists
+            self._cursor_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(self._cursor_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            print(f"Created default cursor file: {self._cursor_file}")
+            self._dirty = False
+            
+        except Exception as e:
+            print(f"Error creating cursor file: {e}")
     
     def save_cursors(self) -> None:
         """Save current cursors to file."""
