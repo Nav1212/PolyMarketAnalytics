@@ -6,6 +6,7 @@ Fetches markets, all markets
 import base64
 import httpx
 import json
+import random
 from typing import List, Dict, Any, Union, Optional
 from datetime import datetime
 from pathlib import Path
@@ -246,35 +247,64 @@ class MarketFetcher:
         next_cursor = None
         total_markets = 0
         
+        # Retry configuration
+        max_attempts = self._config.retry.max_attempts
+        base_delay = self._config.retry.base_delay
+        max_delay = self._config.retry.max_delay
+        exponential_base = self._config.retry.exponential_base
+        
         print(f"[Market Worker {worker_id}] Starting market fetch...")
         
         while stop_event is None or not stop_event.is_set():
             loop_start = time.time()
             self._manager.acquire_market(loop_start)
             
-            try:
-                response: Dict[str, Any] = self.client.get_markets(next_cursor=next_cursor) if next_cursor else self.client.get_markets()  # type: ignore[assignment]
-                batch = response.get("data", [])
-                next_cursor = response.get("next_cursor")
-                
-                if not batch:
-                    break
-                
-                # Enqueue for downstream fetchers
-                self._enqueue_markets_for_fetchers(batch)
-                
-                # Add to output queue
-                if is_swappable:
-                    output_queue.put_many(batch)
-                else:
-                    for market in batch:
-                        output_queue.put(market)
-                
-                total_markets += len(batch)
-                print(f"[Market Worker {worker_id}] Fetched {len(batch)} markets (total: {total_markets})")
-                
-            except Exception as e:
-                print(f"[Market Worker {worker_id}] Error: {e}")
+            # Retry loop for each API call
+            attempt = 0
+            success = False
+            
+            while attempt < max_attempts and not success:
+                attempt += 1
+                try:
+                    response: Dict[str, Any] = self.client.get_markets(next_cursor=next_cursor) if next_cursor else self.client.get_markets()  # type: ignore[assignment]
+                    batch = response.get("data", [])
+                    next_cursor = response.get("next_cursor")
+                    
+                    if not batch:
+                        # No more markets - exit the main loop
+                        success = True
+                        break
+                    
+                    # Enqueue for downstream fetchers
+                    self._enqueue_markets_for_fetchers(batch)
+                    
+                    # Add to output queue
+                    if is_swappable:
+                        output_queue.put_many(batch)
+                    else:
+                        for market in batch:
+                            output_queue.put(market)
+                    
+                    total_markets += len(batch)
+                    print(f"[Market Worker {worker_id}] Fetched {len(batch)} markets (total: {total_markets})")
+                    success = True
+                    
+                except Exception as e:
+                    if attempt < max_attempts:
+                        # Calculate delay with exponential backoff and jitter
+                        delay = min(base_delay * (exponential_base ** (attempt - 1)), max_delay)
+                        jitter = delay * 0.25 * (2 * random.random() - 1)  # ±25% jitter
+                        sleep_time = delay + jitter
+                        
+                        print(f"[Market Worker {worker_id}] Attempt {attempt}/{max_attempts} failed: {e}. Retrying in {sleep_time:.1f}s...")
+                        time.sleep(sleep_time)
+                    else:
+                        print(f"[Market Worker {worker_id}] All {max_attempts} attempts failed: {e}")
+                        # Exit the main loop after exhausting retries
+                        break
+            
+            # If we couldn't succeed after all retries, or no more data, exit
+            if not success or not batch:
                 break
         
         # Send sentinel values to downstream fetchers to signal completion

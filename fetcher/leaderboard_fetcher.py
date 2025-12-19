@@ -4,6 +4,7 @@ Fetches leaderboard data for markets from the Data API
 """
 
 import httpx
+import random
 import threading
 from enum import Enum
 from typing import List, Dict, Any, Generator, Union, Optional
@@ -277,6 +278,12 @@ class LeaderboardFetcher:
         categories = self.get_all_categories()
         time_periods = self.get_all_time_periods()
         
+        # Retry configuration
+        max_attempts = self._config.retry.max_attempts
+        base_delay = self._config.retry.base_delay
+        max_delay = self._config.retry.max_delay
+        exponential_base = self._config.retry.exponential_base
+        
         # Load cursor to resume from last position
         cursor = self._cursor_manager.get_leaderboard_cursor()
         
@@ -318,13 +325,40 @@ class LeaderboardFetcher:
                     )
                     self._cursor_manager.save_cursors()
                     
-                    entries = self.fetch_leaderboard_page(
-                        category=category,
-                        timePeriod=time_period,
-                        orderBy=orderBy,
-                        limit=limit,
-                        offset=offset
-                    )
+                    # Retry loop for each page fetch
+                    attempt = 0
+                    entries = []
+                    fetch_failed = False
+                    
+                    while attempt < max_attempts:
+                        attempt += 1
+                        try:
+                            entries = self.fetch_leaderboard_page(
+                                category=category,
+                                timePeriod=time_period,
+                                orderBy=orderBy,
+                                limit=limit,
+                                offset=offset
+                            )
+                            break  # Success - exit retry loop
+                            
+                        except Exception as e:
+                            if attempt < max_attempts:
+                                # Calculate delay with exponential backoff and jitter
+                                delay = min(base_delay * (exponential_base ** (attempt - 1)), max_delay)
+                                jitter = delay * 0.25 * (2 * random.random() - 1)  # ±25% jitter
+                                sleep_time = delay + jitter
+                                
+                                print(f"[Leaderboard] Attempt {attempt}/{max_attempts} failed for {category.value}/{time_period.value} offset {offset}: {e}. Retrying in {sleep_time:.1f}s...")
+                                time.sleep(sleep_time)
+                            else:
+                                print(f"[Leaderboard] All {max_attempts} attempts failed for {category.value}/{time_period.value} offset {offset}: {e}")
+                                fetch_failed = True
+                    
+                    # If all retries failed, skip this page and continue
+                    if fetch_failed:
+                        offset += limit
+                        continue
                     
                     if not entries:
                         break

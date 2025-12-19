@@ -33,5 +33,11 @@
     "cursors": {
         "enabled": true,
         "filename": "cursor.json"
+    },
+    "retry": {
+        "max_attempts": 3,
+        "base_delay": 1.0,
+        "max_delay": 30.0,
+        "exponential_base": 2.0
     }
 }

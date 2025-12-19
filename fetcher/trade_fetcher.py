@@ -7,6 +7,7 @@ import httpx
 from typing import List, Dict, Any, Union, Optional, Generator
 from datetime import datetime
 from queue import Queue, Empty
+import random
 import threading
 import time
 
@@ -194,7 +195,14 @@ class TradeFetcher:
         # Assert queue is not None - caller must provide it
         assert self._market_queue is not None, "market_queue must be provided for worker"
         
+        # Retry configuration
+        max_attempts = self._config.retry.max_attempts
+        base_delay = self._config.retry.base_delay
+        max_delay = self._config.retry.max_delay
+        exponential_base = self._config.retry.exponential_base
+        
         while True:
+            market = None
             try:
                 # Get market from queue (non-blocking with timeout)
                 market = self._market_queue.get(timeout=1)
@@ -209,101 +217,123 @@ class TradeFetcher:
                     extra={"worker_id": worker_id, "market": market[:16]}
                 )
                 
-                # Check if we should resume from a cursor for this market
-                trade_cursor = self._cursor_manager.get_trade_cursor()
-                if trade_cursor.market == market and trade_cursor.offset > 0:
-                    offset = trade_cursor.offset
-                    filteramount = trade_cursor.filter_amount
-                    logger.info(
-                        f"Worker {worker_id}: Resuming market {market[:16]} from offset={offset}, filter={filteramount}",
-                        extra={"worker_id": worker_id, "market": market[:16]}
-                    )
-                else:
-                    offset = 0
-                    filteramount = 0
+                # Retry loop for processing this market
+                attempt = 0
+                success = False
+                last_exception = None
                 
-                # Fetch all trades for this market
-                trade_count = 0
-                while True:
-                    # Update cursor with current progress and save immediately
-                    self._cursor_manager.update_trade_cursor(
-                        market=market,
-                        offset=offset,
-                        filter_amount=filteramount
-                    )
-                    # Save cursor to disk after every batch for crash recovery
-                    self._cursor_manager.save_cursors()
-                    
-                    loop_start = time.time()
-                    trades = self.fetch_trades(
-                        market=market,
-                        limit=500,
-                        offset=offset,
-                        filtertype ="CASH",
-                        filteramount=filteramount,
-                        loop_start=loop_start
-                    )
-                    
-                    if not trades:
-                        break
-                    
-                    # Add trades to the output queue
-                    if is_swappable:
-                        # Batch add for efficiency
-                        trade_queue.put_many(trades)
-                        trade_count += len(trades)
-                    else:
-                        for trade in trades:
-                            trade_queue.put(trade)
-                            trade_count += 1
-                    
-                    # Set floor to 50th percentile of trade sizes
-                    sizes = sorted([t['size'] for t in trades])
-                    median_size = sizes[len(sizes) // 2]
-                    # Get the timestamp of the last trade to continue from there
-                    # If we got less than the limit, we've fetched everything
-                    if len(trades) < 500:
-                        break
-                    if offset >=1000:
-                        filteramount += int(median_size)
-                        offset =0
-                    offset+=500
+                while attempt < max_attempts and not success:
+                    attempt += 1
+                    try:
+                        # Check if we should resume from a cursor for this market
+                        trade_cursor = self._cursor_manager.get_trade_cursor()
+                        if trade_cursor.market == market and trade_cursor.offset > 0:
+                            offset = trade_cursor.offset
+                            filteramount = trade_cursor.filter_amount
+                            logger.info(
+                                f"Worker {worker_id}: Resuming market {market[:16]} from offset={offset}, filter={filteramount}",
+                                extra={"worker_id": worker_id, "market": market[:16]}
+                            )
+                        else:
+                            offset = 0
+                            filteramount = 0
+                        
+                        # Fetch all trades for this market
+                        trade_count = 0
+                        while True:
+                            # Update cursor with current progress and save immediately
+                            self._cursor_manager.update_trade_cursor(
+                                market=market,
+                                offset=offset,
+                                filter_amount=filteramount
+                            )
+                            # Save cursor to disk after every batch for crash recovery
+                            self._cursor_manager.save_cursors()
+                            
+                            loop_start = time.time()
+                            trades = self.fetch_trades(
+                                market=market,
+                                limit=500,
+                                offset=offset,
+                                filtertype ="CASH",
+                                filteramount=filteramount,
+                                loop_start=loop_start
+                            )
+                            
+                            if not trades:
+                                break
+                            
+                            # Add trades to the output queue
+                            if is_swappable:
+                                # Batch add for efficiency
+                                trade_queue.put_many(trades)
+                                trade_count += len(trades)
+                            else:
+                                for trade in trades:
+                                    trade_queue.put(trade)
+                                    trade_count += 1
+                            
+                            # Set floor to 50th percentile of trade sizes
+                            sizes = sorted([t['size'] for t in trades])
+                            median_size = sizes[len(sizes) // 2]
+                            # Get the timestamp of the last trade to continue from there
+                            # If we got less than the limit, we've fetched everything
+                            if len(trades) < 500:
+                                break
+                            if offset >=1000:
+                                filteramount += int(median_size)
+                                offset =0
+                            offset+=500
 
-                    logger.debug(
-                        f"Worker {worker_id}: Fetched {trade_count} trades so far",
-                        extra={"worker_id": worker_id, "trade_count": trade_count}
-                    )
-                    # Move to the next batch (start after the last trade)
+                            logger.debug(
+                                f"Worker {worker_id}: Fetched {trade_count} trades so far",
+                                extra={"worker_id": worker_id, "trade_count": trade_count}
+                            )
+                            # Move to the next batch (start after the last trade)
+                        
+                        # Market completed successfully
+                        success = True
+                        
+                        # Remove from pending list
+                        current_cursor = self._cursor_manager.get_trade_cursor()
+                        pending = [m for m in current_cursor.pending_markets if m != market]
+                        self._cursor_manager.update_trade_cursor(
+                            market="",  # Clear current market
+                            offset=0,
+                            filter_amount=0,
+                            pending_markets=pending
+                        )
+                        
+                        logger.info(
+                            f"Worker {worker_id}: Finished market {market[:16]}, total trades: {trade_count}",
+                            extra={"worker_id": worker_id, "market": market[:16], "trade_count": trade_count}
+                        )
+                        
+                    except Exception as e:
+                        last_exception = e
+                        if attempt < max_attempts:
+                            # Calculate delay with exponential backoff and jitter
+                            delay = min(base_delay * (exponential_base ** (attempt - 1)), max_delay)
+                            jitter = delay * 0.25 * (2 * random.random() - 1)  # ±25% jitter
+                            sleep_time = delay + jitter
+                            
+                            logger.warning(
+                                f"Worker {worker_id}: Attempt {attempt}/{max_attempts} failed for market {market[:16]}: {e}. Retrying in {sleep_time:.1f}s...",
+                                extra={"worker_id": worker_id, "market": market[:16], "attempt": attempt}
+                            )
+                            time.sleep(sleep_time)
+                        else:
+                            logger.error(
+                                f"Worker {worker_id}: All {max_attempts} attempts failed for market {market[:16]}: {e}",
+                                extra={"worker_id": worker_id, "market": market[:16], "error_type": type(e).__name__}
+                            )
                 
-                # Market completed - remove from pending list
-                current_cursor = self._cursor_manager.get_trade_cursor()
-                pending = [m for m in current_cursor.pending_markets if m != market]
-                self._cursor_manager.update_trade_cursor(
-                    market="",  # Clear current market
-                    offset=0,
-                    filter_amount=0,
-                    pending_markets=pending
-                )
-                
-                logger.info(
-                    f"Worker {worker_id}: Finished market {market[:16]}, total trades: {trade_count}",
-                    extra={"worker_id": worker_id, "market": market[:16], "trade_count": trade_count}
-                )                
+                # Mark task as done regardless of success/failure
                 self._market_queue.task_done()
+                
             except Empty:
                 # Timeout on get() → loop again, don't exit
                 continue
-               
-            except Exception as e:
-                logger.exception(
-                    f"Worker {worker_id}: Unhandled error - {e}",
-                    extra={"worker_id": worker_id, "error_type": type(e).__name__}
-                )
-                if market is not None:
-                    self._market_queue.task_done()
-                if not is_swappable:
-                    trade_queue.put(None)
-                return
     
 
 

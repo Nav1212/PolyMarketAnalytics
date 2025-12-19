@@ -74,6 +74,15 @@ class CursorsConfig:
 
 
 @dataclass
+class RetryConfig:
+    """Retry configuration for failed worker executions."""
+    max_attempts: int = 3
+    base_delay: float = 1.0
+    max_delay: float = 30.0
+    exponential_base: float = 2.0
+
+
+@dataclass
 class Config:
     """Main configuration class."""
     rate_limits: RateLimitsConfig = field(default_factory=RateLimitsConfig)
@@ -82,6 +91,7 @@ class Config:
     api: ApiConfig = field(default_factory=ApiConfig)
     workers: WorkersConfig = field(default_factory=WorkersConfig)
     cursors: CursorsConfig = field(default_factory=CursorsConfig)
+    retry: RetryConfig = field(default_factory=RetryConfig)
     
     @property
     def batch_sizes(self) -> BatchSizesConfig:
@@ -102,7 +112,8 @@ class Config:
             output_dirs=OutputDirsConfig(**data.get("output_dirs", {})),
             api=ApiConfig(**data.get("api", {})),
             workers=WorkersConfig(**data.get("workers", {})),
-            cursors=CursorsConfig(**data.get("cursors", {}))
+            cursors=CursorsConfig(**data.get("cursors", {})),
+            retry=RetryConfig(**data.get("retry", {}))
         )
     
     def to_dict(self) -> dict:
@@ -141,6 +152,12 @@ class Config:
             "cursors": {
                 "enabled": self.cursors.enabled,
                 "filename": self.cursors.filename
+            },
+            "retry": {
+                "max_attempts": self.retry.max_attempts,
+                "base_delay": self.retry.base_delay,
+                "max_delay": self.retry.max_delay,
+                "exponential_base": self.retry.exponential_base
             }
         }
 

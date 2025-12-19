@@ -7,6 +7,7 @@ import httpx
 from typing import List, Dict, Any, Union, Optional
 from datetime import datetime
 from queue import Queue, Empty
+import random
 import threading
 import time
 
@@ -220,7 +221,15 @@ class PriceFetcher:
         # Assert queue is not None - caller must provide it
         assert self._market_queue is not None, "market_queue must be provided for worker"
         
+        # Retry configuration
+        max_attempts = self._config.retry.max_attempts
+        base_delay = self._config.retry.base_delay
+        max_delay = self._config.retry.max_delay
+        exponential_base = self._config.retry.exponential_base
+        
         while True:
+            token_id = None
+            queue_item = None
             try:
                 # Get token from queue (non-blocking with timeout)
                 # Queue now contains tuples of (token_id, market_start_ts)
@@ -241,56 +250,73 @@ class PriceFetcher:
                 # Use market start time if available, otherwise use provided start_time
                 effective_start = market_start_ts if market_start_ts is not None else start_time
                 
-                # Update cursor with current progress
-                self._cursor_manager.update_price_cursor(
-                    token_id=token_id,
-                    start_ts=effective_start,
-                    end_ts=end_time
-                )
-                
                 print(f"Worker {worker_id}: Processing token {token_id[:10] if len(token_id) > 10 else token_id}...")
                 
-                loop_start = time.time()
-                prices = self.fetch_price_history(
-                    token_id=token_id,
-                    start_ts=effective_start,
-                    end_ts=end_time,
-                    fidelity=fidelity,
-                    loop_start=loop_start
-                )
+                # Retry loop for processing this token
+                attempt = 0
+                success = False
+                last_exception = None
                 
-                if prices:
-                    if is_swappable:
-                        price_queue.put_many(prices)
-                    else:
-                        for price in prices:
-                            price_queue.put(price)
-                    
-                    print(f"Worker {worker_id}: Fetched {len(prices)} prices for token {token_id[:10] if len(token_id) > 10 else token_id}")
+                while attempt < max_attempts and not success:
+                    attempt += 1
+                    try:
+                        # Update cursor with current progress
+                        self._cursor_manager.update_price_cursor(
+                            token_id=token_id,
+                            start_ts=effective_start,
+                            end_ts=end_time
+                        )
+                        
+                        loop_start = time.time()
+                        prices = self.fetch_price_history(
+                            token_id=token_id,
+                            start_ts=effective_start,
+                            end_ts=end_time,
+                            fidelity=fidelity,
+                            loop_start=loop_start
+                        )
+                        
+                        if prices:
+                            if is_swappable:
+                                price_queue.put_many(prices)
+                            else:
+                                for price in prices:
+                                    price_queue.put(price)
+                            
+                            print(f"Worker {worker_id}: Fetched {len(prices)} prices for token {token_id[:10] if len(token_id) > 10 else token_id}")
+                        
+                        # Token completed successfully
+                        success = True
+                        
+                        # Remove from pending list
+                        current_cursor = self._cursor_manager.get_price_cursor()
+                        pending = [t for t in current_cursor.pending_tokens 
+                                  if (t[0] if isinstance(t, tuple) else t) != token_id]
+                        self._cursor_manager.update_price_cursor(
+                            token_id="",  # Clear current token
+                            start_ts=start_time or 0,
+                            end_ts=end_time or 0,
+                            pending_tokens=pending
+                        )
+                        
+                    except Exception as e:
+                        last_exception = e
+                        if attempt < max_attempts:
+                            # Calculate delay with exponential backoff and jitter
+                            delay = min(base_delay * (exponential_base ** (attempt - 1)), max_delay)
+                            jitter = delay * 0.25 * (2 * random.random() - 1)  # ±25% jitter
+                            sleep_time = delay + jitter
+                            
+                            print(f"Worker {worker_id}: Attempt {attempt}/{max_attempts} failed for token {token_id[:10] if len(token_id) > 10 else token_id}: {e}. Retrying in {sleep_time:.1f}s...")
+                            time.sleep(sleep_time)
+                        else:
+                            print(f"Worker {worker_id}: All {max_attempts} attempts failed for token {token_id[:10] if len(token_id) > 10 else token_id}: {e}")
                 
-                # Token completed - remove from pending list
-                current_cursor = self._cursor_manager.get_price_cursor()
-                pending = [t for t in current_cursor.pending_tokens 
-                          if (t[0] if isinstance(t, tuple) else t) != token_id]
-                self._cursor_manager.update_price_cursor(
-                    token_id="",  # Clear current token
-                    start_ts=start_time or 0,
-                    end_ts=end_time or 0,
-                    pending_tokens=pending
-                )
-                
-                self._market_queue .task_done()
+                # Mark task as done regardless of success/failure
+                self._market_queue.task_done()
                 
             except Empty:
                 continue
-            
-            except Exception as e:
-                print(f"Worker {worker_id}: Error - {e}")
-                if token_id is not None:
-                    self._market_queue.task_done()
-                if not is_swappable:
-                    price_queue.put(None)
-                return
     
 
 
