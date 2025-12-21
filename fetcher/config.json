@@ -8,8 +8,8 @@
     },
     "queues": {
         "trade_threshold": 10000,
-        "market_threshold": 100000,
-        "market_token_threshold": 50000,
+        "market_threshold": 10000,
+        "market_token_threshold": 5000,
         "price_threshold": 10000,
         "leaderboard_threshold": 5000
     },

@@ -1,0 +1,26 @@
+{
+  "trades": {
+    "market": "0xc4594f308ef227b2fce7468fdad56aa40286e67f29dc99f17582e6c03b672886",
+    "offset": 0,
+    "filter_amount": 0,
+    "pending_markets": []
+  },
+  "prices": {
+    "token_id": "78513141036303953201373408647642872206090546443614588919811949591085903773057",
+    "start_ts": 1716958800,
+    "end_ts": 1717045200,
+    "pending_tokens": [],
+    "completed": false
+  },
+  "leaderboard": {
+    "current_category_index": 9,
+    "current_time_period_index": 3,
+    "current_offset": 0,
+    "completed": true
+  },
+  "markets": {
+    "next_cursor": "",
+    "completed": true
+  },
+  "last_updated": "2025-12-21T07:32:13.705019"
+}

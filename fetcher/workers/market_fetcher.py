@@ -6,6 +6,7 @@ Fetches markets, all markets
 import base64
 import httpx
 import json
+import logging
 import random
 from typing import List, Dict, Any, Union, Optional
 from datetime import datetime
@@ -21,6 +22,10 @@ from fetcher.persistence.parquet_persister import ParquetPersister, create_marke
 from fetcher.workers.worker_manager import WorkerManager, get_worker_manager
 from fetcher.config import get_config, Config
 from fetcher.cursors.manager import CursorManager, get_cursor_manager
+
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 
 # Sentinel cursor value that signals end of pagination (base64 encoded "-1")
@@ -92,8 +97,19 @@ class MarketFetcher:
         is_token_queue_swappable = isinstance(self._market_token_queue, SwappableQueue)
         token_batch = []  # Collect tokens for batch insert
         
+        # Track statistics for logging
+        open_market_count = 0
+        closed_market_count = 0
+        price_tokens_enqueued = 0
+        
         for market in markets:
             condition_id = market.get("condition_id")
+            is_closed = market.get("closed", False)
+            
+            if is_closed:
+                closed_market_count += 1
+            else:
+                open_market_count += 1
             
             # Write to trade fetcher queue
             if self._trade_market_queue is not None and condition_id:
@@ -105,23 +121,58 @@ class MarketFetcher:
             
             # Extract tokens for parquet persistence and price fetcher
             tokens = market.get("tokens", [])
-            # Get market start time from game_start_time or end_date_iso
-            market_start = market.get("game_start_time") or market.get("end_date_iso")
+            
+            # Calculate timestamps for price fetching
+            # For closed markets, we need both start and end times from when the market was active
+            game_start = market.get("game_start_time")
+            end_date = market.get("end_date_iso")
+            
+            # Parse start timestamp (when market started being active)
             market_start_ts = None
-            if market_start:
+            if game_start:
                 try:
-                    # Parse ISO format datetime
-                    dt = datetime.fromisoformat(market_start.replace('Z', '+00:00'))
+                    dt = datetime.fromisoformat(game_start.replace('Z', '+00:00'))
                     market_start_ts = int(dt.timestamp())
                 except (ValueError, AttributeError):
                     pass
+            elif end_date:
+                try:
+                    dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                    # For end_date, assume market started ~30 days before
+                    market_start_ts = int(dt.timestamp()) - (30 * 24 * 60 * 60)
+                except (ValueError, AttributeError):
+                    pass
+            
+            # Parse end timestamp (when market closed) - only relevant for closed markets
+            market_end_ts = None
+            if is_closed:
+                # Use game_start_time as the effective end (market resolves at game time)
+                # or end_date_iso if game_start_time is not available
+                if game_start:
+                    try:
+                        dt = datetime.fromisoformat(game_start.replace('Z', '+00:00'))
+                        # Add a buffer after game start for final trades
+                        market_end_ts = int(dt.timestamp()) + (24 * 60 * 60)  # 24h after game
+                    except (ValueError, AttributeError):
+                        pass
+                elif end_date:
+                    try:
+                        dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                        market_end_ts = int(dt.timestamp())
+                    except (ValueError, AttributeError):
+                        pass
             
             for token in tokens:
                 token_id = token.get("token_id")
                 if token_id:
                     # Write to price fetcher queue
+                    # Queue item format: (token_id, start_ts, end_ts, is_closed)
+                    # - For open markets: end_ts=None (use current time)
+                    # - For closed markets: end_ts=market_end_ts (use historical period)
                     if self._price_token_queue is not None:
-                        self._price_token_queue.put((token_id, market_start_ts))
+                        queue_item = (token_id, market_start_ts, market_end_ts, is_closed)
+                        self._price_token_queue.put(queue_item)
+                        price_tokens_enqueued += 1
                     
                     # Extract token data for parquet (matches MARKET_TOKEN_SCHEMA)
                     if self._market_token_queue is not None:
@@ -129,9 +180,18 @@ class MarketFetcher:
                             'condition_Id': condition_id,
                             'token_id': token_id,
                             'price': float(token.get('price', 0.0)) if token.get('price') else 0.0,
-                            'winner': bool(token.get('winner', False))
+                            'winner': bool(token.get('winner', False)),
+                            'outcome': token.get('outcome', '')
                         }
                         token_batch.append(token_record)
+        
+        # Log statistics about market filtering
+        if self._price_token_queue is not None:
+            logger.info(
+                f"Market batch: {len(markets)} total, {open_market_count} open, "
+                f"{closed_market_count} closed. "
+                f"Enqueued {price_tokens_enqueued} tokens for price fetching."
+            )
         
         # Write tokens to queue
         if self._market_token_queue is not None and token_batch:

@@ -459,7 +459,7 @@ class TestLeaderboardFetcherWorker:
         with patch.object(fetcher, 'fetch_leaderboard_page', return_value=mock_entries):
             with patch.object(fetcher, 'get_all_categories', return_value=[LeaderboardCategory.OVERALL]):
                 with patch.object(fetcher, 'get_all_time_periods', return_value=[LeaderboardTimePeriod.DAY]):
-                    threads = fetcher.run_workers(output_queue, num_workers=1)
+                    threads = fetcher.run_workers(output_queue)
                     
                     for t in threads:
                         t.join(timeout=10)
@@ -486,7 +486,7 @@ class TestLeaderboardFetcherWorker:
         with patch.object(fetcher, 'fetch_leaderboard_page', return_value=[]):
             with patch.object(fetcher, 'get_all_categories', return_value=[LeaderboardCategory.OVERALL]):
                 with patch.object(fetcher, 'get_all_time_periods', return_value=[LeaderboardTimePeriod.DAY]):
-                    threads = fetcher.run_workers(output_queue, num_workers=1)
+                    threads = fetcher.run_workers(output_queue)
                     
                     for t in threads:
                         t.join(timeout=10)
@@ -580,7 +580,7 @@ class TestWorkerParquetIntegration:
         with patch.object(fetcher, 'fetch_leaderboard_page', return_value=test_entries):
             with patch.object(fetcher, 'get_all_categories', return_value=[LeaderboardCategory.OVERALL]):
                 with patch.object(fetcher, 'get_all_time_periods', return_value=[LeaderboardTimePeriod.DAY]):
-                    threads = fetcher.run_workers(output_queue, num_workers=1)
+                    threads = fetcher.run_workers(output_queue)
                     
                     for t in threads:
                         t.join(timeout=10)
@@ -676,8 +676,8 @@ class TestMultipleWorkersCoordination:
         with patch.object(fetcher, 'fetch_leaderboard_page', return_value=mock_entries):
             with patch.object(fetcher, 'get_all_categories', return_value=[LeaderboardCategory.OVERALL]):
                 with patch.object(fetcher, 'get_all_time_periods', return_value=[LeaderboardTimePeriod.DAY]):
-                    # Note: run_workers now only uses 1 worker since it's enum iteration, not queue-based
-                    threads = fetcher.run_workers(output_queue, num_workers=2)  # Will still only start 1
+                    # Note: run_workers only uses 1 worker since it's enum iteration, not queue-based
+                    threads = fetcher.run_workers(output_queue)
                     
                     # Wait for completion
                     for t in threads:

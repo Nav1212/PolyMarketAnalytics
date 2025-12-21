@@ -7,19 +7,16 @@ Supports cursor persistence for resumable fetching:
 """
 
 import argparse
-import signal
 import sys
 from datetime import datetime
 from queue import Queue
 from typing import Optional
-from trade_fetcher import TradeFetcher
-from worker_manager import WorkerManager
-from coordinator import FetcherCoordinator, LoadOrder
-from config import get_config
-from cursor_manager import get_cursor_manager
+from fetcher.workers import TradeFetcher, WorkerManager
+from fetcher.coordination import FetcherCoordinator, LoadOrder
+from fetcher.config import get_config
+from fetcher.cursors import get_cursor_manager
 import duckdb
 from pathlib import Path
-import time
 
 # Database path
 DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent / "PolyMarketData"
@@ -310,7 +307,12 @@ def main():
         coordinator.print_statistics()
     
     except KeyboardInterrupt:
-        print("\n\nInterrupted by user. Cursors have been saved.")
+        print("\n\nInterrupted by user. Saving progress...")
+        # Signal shutdown and save cursors
+        coordinator.signal_shutdown()
+        # Flush remaining data to parquet
+        coordinator._stop_persisters()
+        print("Cursors and data have been saved.")
         print("Run the program again to resume from the last position.")
         print("Use --fresh flag to start a new fetch instead.")
         sys.exit(1)

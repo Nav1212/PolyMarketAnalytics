@@ -11,6 +11,8 @@ Exports:
     - LeaderboardFetcher: Fetches leaderboard data
     - WorkerManager: Centralized rate limiting and timing statistics
     - get_worker_manager, set_worker_manager: Global singleton accessors
+    - PriceParamsProvider, HistoricalPriceParamsProvider: DI for price params
+    - get_price_params_provider, set_price_params_provider: Singleton accessors
 """
 
 from fetcher.workers.trade_fetcher import TradeFetcher
@@ -23,6 +25,13 @@ from fetcher.workers.worker_manager import (
     set_worker_manager,
     TokenBucket,
 )
+from fetcher.workers.params_provider import (
+    PriceParamsProvider,
+    HistoricalPriceParamsProvider,
+    PriceParams,
+    get_price_params_provider,
+    set_price_params_provider,
+)
 
 __all__ = [
     "TradeFetcher",
@@ -33,4 +42,9 @@ __all__ = [
     "get_worker_manager",
     "set_worker_manager",
     "TokenBucket",
+    "PriceParamsProvider",
+    "HistoricalPriceParamsProvider",
+    "PriceParams",
+    "get_price_params_provider",
+    "set_price_params_provider",
 ]

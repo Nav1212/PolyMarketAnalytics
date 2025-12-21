@@ -96,7 +96,7 @@ def test_market_endpoint() -> Tuple[Any, Dict[str, float]]:
             request_end = time.time()
             timing['request_time'] = request_end - request_start
             
-            data = response
+            data: Dict[str, Any] = response  # type: ignore[assignment]
             markets = data.get("data", [])
             print(f"  Fetched {len(markets)} markets")
             
