@@ -51,7 +51,8 @@ TRADE_SCHEMA = pa.schema([
     ('conditionId', pa.string()),
     ('timestamp', pa.int64()),
     ('transactionHash', pa.string()),
-    ('outcome', pa.string())
+    ('outcome', pa.string()),
+    ('name', pa.string()),
     # ('maker', pa.string()),
     # ('taker', pa.string()),
     # ('market', pa.string()),
@@ -65,11 +66,16 @@ MARKET_SCHEMA = pa.schema([
     ('end_date_iso', pa.string()),   
     ('game_start_time', pa.string()),
     ('description', pa.string()),
+    ('question', pa.string()),
     ('maker_base_fee', pa.float64()),
     ('fpmm', pa.string()),
     ('question', pa.string()),
     ('closed', pa.bool_()),
-    ('active', pa.bool_())
+    ('active', pa.bool_()),
+    ('volume', pa.float64()),
+    ('liquidity', pa.float64()),
+    ('active', pa.bool8())
+
 ])
 
 MARKET_TOKEN_SCHEMA = pa.schema([
