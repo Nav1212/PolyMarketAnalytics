@@ -71,6 +71,7 @@ class WorkerManager:
         market_rate: int = 100,
         price_rate: int = 100,
         leaderboard_rate: int = 70,
+        gamma_market_rate: int = 100,
         window_seconds: float = 10.0,
         config: Optional["Config"] = None
     ):
@@ -80,6 +81,7 @@ class WorkerManager:
             market_rate: Requests per window for market API (default 100)
             price_rate: Requests per window for price API (default 100)
             leaderboard_rate: Requests per window for leaderboard API (default 70)
+            gamma_market_rate: Requests per window for Gamma market API (default 100)
             window_seconds: Time window in seconds (default 10s)
             config: Optional Config object to load settings from
         """
@@ -89,6 +91,7 @@ class WorkerManager:
             market_rate = config.rate_limits.market
             price_rate = config.rate_limits.price
             leaderboard_rate = config.rate_limits.leaderboard
+            gamma_market_rate = getattr(config.rate_limits, 'gamma_market', 100)
             window_seconds = config.rate_limits.window_seconds
         
         # Separate token buckets
@@ -96,12 +99,14 @@ class WorkerManager:
         self._market_bucket = TokenBucket(market_rate, window_seconds)
         self._price_bucket = TokenBucket(price_rate, window_seconds)
         self._leaderboard_bucket = TokenBucket(leaderboard_rate, window_seconds)
+        self._gamma_market_bucket = TokenBucket(gamma_market_rate, window_seconds)
         
         # Timing stats - one deque per job type (lock-free appends)
         self._trade_hit_times: deque = deque()
         self._market_hit_times: deque = deque()
         self._price_hit_times: deque = deque()
         self._leaderboard_hit_times: deque = deque()
+        self._gamma_market_hit_times: deque = deque()
     
     def acquire_trade(self, loop_start: Optional[float] = None) -> None:
         """
@@ -155,6 +160,19 @@ class WorkerManager:
             elapsed = time.time() - loop_start
             self._leaderboard_hit_times.append(elapsed)
     
+    def acquire_gamma_market(self, loop_start: Optional[float] = None) -> None:
+        """
+        Acquire a token for Gamma market API requests.
+        If rate limit is hit and loop_start provided, records time-to-first-hit.
+        
+        Args:
+            loop_start: Timestamp when current loop iteration started (from time.time())
+        """
+        waited = self._gamma_market_bucket.acquire()
+        if waited and loop_start is not None:
+            elapsed = time.time() - loop_start
+            self._gamma_market_hit_times.append(elapsed)
+    
     def _compute_stats(self, times: deque) -> Optional[dict]:
         """Compute average, median, and fastest from a deque of times."""
         if not times:
@@ -184,6 +202,10 @@ class WorkerManager:
     def get_leaderboard_stats(self) -> Optional[dict]:
         """Get timing statistics for leaderboard rate limit hits."""
         return self._compute_stats(self._leaderboard_hit_times)
+    
+    def get_gamma_market_stats(self) -> Optional[dict]:
+        """Get timing statistics for Gamma market rate limit hits."""
+        return self._compute_stats(self._gamma_market_hit_times)
     
     def print_statistics(self) -> None:
         """Print timing statistics for both job types."""
@@ -239,6 +261,18 @@ class WorkerManager:
         else:
             print("  No rate limit hits recorded")
         
+        # Gamma market stats
+        print("\n[GAMMA MARKET API]")
+        gamma_market_stats = self.get_gamma_market_stats()
+        if gamma_market_stats:
+            print(f"  Total rate limit hits: {gamma_market_stats['count']}")
+            print(f"  Average time to hit:   {gamma_market_stats['average']:.4f}s")
+            print(f"  Median time to hit:    {gamma_market_stats['median']:.4f}s")
+            print(f"  Fastest time to hit:   {gamma_market_stats['fastest']:.4f}s")
+            print(f"  Slowest time to hit:   {gamma_market_stats['slowest']:.4f}s")
+        else:
+            print("  No rate limit hits recorded")
+        
         print("\n" + "=" * 60)
     
     def reset_statistics(self) -> None:
@@ -247,6 +281,7 @@ class WorkerManager:
         self._market_hit_times.clear()
         self._price_hit_times.clear()
         self._leaderboard_hit_times.clear()
+        self._gamma_market_hit_times.clear()
 
 
 # Global singleton for easy access (optional pattern)

@@ -31,6 +31,9 @@ class DataType(Enum):
     MARKET_TOKEN = "market_token"
     PRICE = "price"
     LEADERBOARD = "leaderboard"
+    GAMMA_MARKET = "gamma_market"
+    GAMMA_EVENT = "gamma_event"
+    GAMMA_CATEGORY = "gamma_category"
 
 
 # =============================================================================
@@ -61,6 +64,8 @@ TRADE_SCHEMA = pa.schema([
     # ------------------------------------------------------------------------- 
 ])
 
+
+
 MARKET_SCHEMA = pa.schema([
     ('condition_Id', pa.string()),
     ('end_date_iso', pa.string()),   
@@ -76,6 +81,50 @@ MARKET_SCHEMA = pa.schema([
     ('liquidity', pa.float64()),
     ('active', pa.bool8())
 
+])
+
+GAMMA_MARKET_SCHEMA = pa.schema([
+    ('id', pa.string()),
+    ('conditionId', pa.string()),
+    ('question', pa.string()),
+    ('slug', pa.string()),
+    ('category', pa.string()),
+    ('description', pa.string()),
+    ('liquidity', pa.string()),
+    ('volume', pa.string()),
+    ('active', pa.bool_()),
+    ('closed', pa.bool_()),
+    ('startDate', pa.string()),
+    ('endDate', pa.string()),
+    ('outcomes', pa.string()),
+    ('outcomePrices', pa.string()),
+    ('clobTokenIds', pa.string()),
+    ('volumeNum', pa.float64()),
+    ('liquidityNum', pa.float64()),
+    ('marketGroup', pa.int64()),
+])
+
+GAMMA_EVENT_SCHEMA = pa.schema([
+    ('marketId', pa.string()),  # FK to gamma market
+    ('eventId', pa.string()),
+    ('ticker', pa.string()),
+    ('slug', pa.string()),
+    ('title', pa.string()),
+    ('description', pa.string()),
+    ('category', pa.string()),
+    ('subcategory', pa.string()),
+    ('liquidity', pa.float64()),
+    ('volume', pa.float64()),
+    ('active', pa.bool_()),
+    ('closed', pa.bool_()),
+])
+
+GAMMA_CATEGORY_SCHEMA = pa.schema([
+    ('marketId', pa.string()),  # FK to gamma market
+    ('categoryId', pa.string()),
+    ('label', pa.string()),
+    ('parentCategory', pa.string()),
+    ('slug', pa.string()),
 ])
 
 MARKET_TOKEN_SCHEMA = pa.schema([
@@ -457,6 +506,12 @@ class ParquetPersister:
             self._write_price_parquet(items)
         elif self._data_type == DataType.LEADERBOARD:
             self._write_leaderboard_parquet(items)
+        elif self._data_type == DataType.GAMMA_MARKET:
+            self._write_gamma_market_parquet(items)
+        elif self._data_type == DataType.GAMMA_EVENT:
+            self._write_gamma_event_parquet(items)
+        elif self._data_type == DataType.GAMMA_CATEGORY:
+            self._write_gamma_category_parquet(items)
         else:
             raise ValueError(f"Unknown data type: {self._data_type}")
 
@@ -748,6 +803,174 @@ class ParquetPersister:
                 extra={"filepath": str(filepath) if 'filepath' in locals() else None}
             )
 
+    def _write_gamma_market_parquet(self, items: List[Dict[str, Any]]) -> None:
+        """
+        Write a batch of Gamma market items to a parquet file.
+        
+        Args:
+            items: List of Gamma market dictionaries to write
+        """
+        if not items:
+            return
+        
+        try:
+            timestamp = datetime.now()
+            
+            # Build output path
+            if self._use_hive_partitioning:
+                date_partition = timestamp.strftime("dt=%Y-%m-%d")
+                partition_dir = self._output_dir / date_partition
+                partition_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                partition_dir = self._output_dir
+            
+            filename = f"gamma_markets_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.parquet"
+            filepath = partition_dir / filename
+            
+            # Convert to PyArrow table
+            if len(GAMMA_MARKET_SCHEMA) > 0:
+                table = pa.Table.from_pylist(items, schema=GAMMA_MARKET_SCHEMA)
+            else:
+                table = pa.Table.from_pylist(items)
+            
+            # Write parquet file
+            pq.write_table(
+                table,
+                filepath,
+                compression='snappy',
+                use_dictionary=True,
+                write_statistics=True
+            )
+            
+            # Update stats
+            with self._lock:
+                self._files_written += 1
+                self._total_records_written += len(items)
+                file_num = self._files_written
+            
+            logger.info(
+                f"Written {len(items)} gamma_market records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
+        
+        except Exception as e:
+            logger.exception(
+                f"Error writing gamma_market parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
+
+    def _write_gamma_event_parquet(self, items: List[Dict[str, Any]]) -> None:
+        """
+        Write a batch of Gamma event items to a parquet file.
+        
+        Args:
+            items: List of Gamma event dictionaries to write
+        """
+        if not items:
+            return
+        
+        try:
+            timestamp = datetime.now()
+            
+            # Build output path
+            if self._use_hive_partitioning:
+                date_partition = timestamp.strftime("dt=%Y-%m-%d")
+                partition_dir = self._output_dir / date_partition
+                partition_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                partition_dir = self._output_dir
+            
+            filename = f"gamma_events_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.parquet"
+            filepath = partition_dir / filename
+            
+            # Convert to PyArrow table
+            if len(GAMMA_EVENT_SCHEMA) > 0:
+                table = pa.Table.from_pylist(items, schema=GAMMA_EVENT_SCHEMA)
+            else:
+                table = pa.Table.from_pylist(items)
+            
+            # Write parquet file
+            pq.write_table(
+                table,
+                filepath,
+                compression='snappy',
+                use_dictionary=True,
+                write_statistics=True
+            )
+            
+            # Update stats
+            with self._lock:
+                self._files_written += 1
+                self._total_records_written += len(items)
+                file_num = self._files_written
+            
+            logger.info(
+                f"Written {len(items)} gamma_event records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
+        
+        except Exception as e:
+            logger.exception(
+                f"Error writing gamma_event parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
+
+    def _write_gamma_category_parquet(self, items: List[Dict[str, Any]]) -> None:
+        """
+        Write a batch of Gamma category items to a parquet file.
+        
+        Args:
+            items: List of Gamma category dictionaries to write
+        """
+        if not items:
+            return
+        
+        try:
+            timestamp = datetime.now()
+            
+            # Build output path
+            if self._use_hive_partitioning:
+                date_partition = timestamp.strftime("dt=%Y-%m-%d")
+                partition_dir = self._output_dir / date_partition
+                partition_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                partition_dir = self._output_dir
+            
+            filename = f"gamma_categories_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.parquet"
+            filepath = partition_dir / filename
+            
+            # Convert to PyArrow table
+            if len(GAMMA_CATEGORY_SCHEMA) > 0:
+                table = pa.Table.from_pylist(items, schema=GAMMA_CATEGORY_SCHEMA)
+            else:
+                table = pa.Table.from_pylist(items)
+            
+            # Write parquet file
+            pq.write_table(
+                table,
+                filepath,
+                compression='snappy',
+                use_dictionary=True,
+                write_statistics=True
+            )
+            
+            # Update stats
+            with self._lock:
+                self._files_written += 1
+                self._total_records_written += len(items)
+                file_num = self._files_written
+            
+            logger.info(
+                f"Written {len(items)} gamma_category records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
+        
+        except Exception as e:
+            logger.exception(
+                f"Error writing gamma_category parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
+
     @property
     def stats(self) -> Dict[str, int]:
         """Return current write statistics."""
@@ -932,5 +1155,80 @@ def create_leaderboard_persisted_queue(
         threshold=threshold,
         output_dir=output_dir,
         data_type=DataType.LEADERBOARD,
+        auto_start=auto_start
+    )
+
+
+def create_gamma_market_persisted_queue(
+    threshold: int = 1000,
+    output_dir: str = "data/gamma_markets",
+    auto_start: bool = True
+) -> tuple[SwappableQueue, ParquetPersister]:
+    """
+    Create a queue with attached parquet persister for Gamma market data.
+    Convenience wrapper around create_persisted_queue.
+    
+    Args:
+        threshold: Number of items that triggers a write
+        output_dir: Directory for parquet files
+        auto_start: Start the persister immediately
+    
+    Returns:
+        Tuple of (queue, persister)
+    """
+    return create_persisted_queue(
+        threshold=threshold,
+        output_dir=output_dir,
+        data_type=DataType.GAMMA_MARKET,
+        auto_start=auto_start
+    )
+
+
+def create_gamma_event_persisted_queue(
+    threshold: int = 1000,
+    output_dir: str = "data/gamma_events",
+    auto_start: bool = True
+) -> tuple[SwappableQueue, ParquetPersister]:
+    """
+    Create a queue with attached parquet persister for Gamma event data.
+    Convenience wrapper around create_persisted_queue.
+    
+    Args:
+        threshold: Number of items that triggers a write
+        output_dir: Directory for parquet files
+        auto_start: Start the persister immediately
+    
+    Returns:
+        Tuple of (queue, persister)
+    """
+    return create_persisted_queue(
+        threshold=threshold,
+        output_dir=output_dir,
+        data_type=DataType.GAMMA_EVENT,
+        auto_start=auto_start
+    )
+
+
+def create_gamma_category_persisted_queue(
+    threshold: int = 1000,
+    output_dir: str = "data/gamma_categories",
+    auto_start: bool = True
+) -> tuple[SwappableQueue, ParquetPersister]:
+    """
+    Create a queue with attached parquet persister for Gamma category data.
+    Convenience wrapper around create_persisted_queue.
+    
+    Args:
+        threshold: Number of items that triggers a write
+        output_dir: Directory for parquet files
+        auto_start: Start the persister immediately
+    
+    Returns:
+        Tuple of (queue, persister)
+    """
+    return create_persisted_queue(
+        threshold=threshold,
+        output_dir=output_dir,
+        data_type=DataType.GAMMA_CATEGORY,
         auto_start=auto_start
     )

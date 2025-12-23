@@ -8,7 +8,7 @@ Exports:
     - CursorManager: Main class for cursor state management
     - get_cursor_manager: Get global singleton instance
     - set_cursor_manager: Set global singleton instance
-    - TradeCursor, PriceCursor, LeaderboardCursor, MarketCursor: Dataclasses
+    - TradeCursor, PriceCursor, LeaderboardCursor, MarketCursor, GammaMarketCursor: Dataclasses
     - Cursors: Container for all cursor types
 """
 
@@ -20,6 +20,7 @@ from fetcher.cursors.manager import (
     PriceCursor,
     LeaderboardCursor,
     MarketCursor,
+    GammaMarketCursor,
     Cursors,
 )
 
@@ -31,5 +32,6 @@ __all__ = [
     "PriceCursor",
     "LeaderboardCursor",
     "MarketCursor",
+    "GammaMarketCursor",
     "Cursors",
 ]

@@ -66,12 +66,22 @@ class MarketCursor:
 
 
 @dataclass
+class GammaMarketCursor:
+    """Cursor for Gamma market fetching progress (manual reset)."""
+    completed: bool = False
+    
+    def is_empty(self) -> bool:
+        return not self.completed
+
+
+@dataclass
 class Cursors:
     """Container for all cursor types."""
     trades: TradeCursor = field(default_factory=TradeCursor)
     prices: PriceCursor = field(default_factory=PriceCursor)
     leaderboard: LeaderboardCursor = field(default_factory=LeaderboardCursor)
     markets: MarketCursor = field(default_factory=MarketCursor)
+    gamma_markets: GammaMarketCursor = field(default_factory=GammaMarketCursor)
     last_updated: str = ""
     
     def has_any_progress(self) -> bool:
@@ -80,7 +90,8 @@ class Cursors:
             not self.trades.is_empty() or
             not self.prices.is_empty() or
             not self.leaderboard.is_empty() or
-            not self.markets.is_empty()
+            not self.markets.is_empty() or
+            not self.gamma_markets.is_empty()
         )
 
 
@@ -195,6 +206,12 @@ class CursorManager:
                         completed=market_data.get('completed', False)
                     )
                     
+                    # Parse gamma market cursor
+                    gamma_data = data.get('gamma_markets', {})
+                    self._cursors.gamma_markets = GammaMarketCursor(
+                        completed=gamma_data.get('completed', False)
+                    )
+                    
                     self._cursors.last_updated = data.get('last_updated', '')
                     
                     print(f"Loaded cursors from {self._cursor_file}")
@@ -237,6 +254,9 @@ class CursorManager:
             },
             'markets': {
                 'next_cursor': '',
+                'completed': False
+            },
+            'gamma_markets': {
                 'completed': False
             },
             'last_updated': datetime.now().isoformat()
@@ -289,6 +309,9 @@ class CursorManager:
                 'markets': {
                     'next_cursor': self._cursors.markets.next_cursor,
                     'completed': self._cursors.markets.completed
+                },
+                'gamma_markets': {
+                    'completed': self._cursors.gamma_markets.completed
                 },
                 'last_updated': self._cursors.last_updated
             }
@@ -440,6 +463,26 @@ class CursorManager:
         """Clear the market cursor."""
         with self._lock:
             self._cursors.markets = MarketCursor()
+            self._dirty = True
+    
+    # Gamma market cursor methods (manual reset only)
+    def update_gamma_market_cursor(self, completed: bool = False) -> None:
+        """Update the gamma market cursor."""
+        with self._lock:
+            self._cursors.gamma_markets.completed = completed
+            self._dirty = True
+    
+    def get_gamma_market_cursor(self) -> GammaMarketCursor:
+        """Get the current gamma market cursor."""
+        with self._lock:
+            return GammaMarketCursor(
+                completed=self._cursors.gamma_markets.completed
+            )
+    
+    def clear_gamma_market_cursor(self) -> None:
+        """Clear the gamma market cursor (manual reset)."""
+        with self._lock:
+            self._cursors.gamma_markets = GammaMarketCursor()
             self._dirty = True
     
     @property

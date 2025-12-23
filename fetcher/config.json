@@ -4,6 +4,7 @@
         "market": 100,
         "price": 100,
         "leaderboard": 70,
+        "gamma_market": 100,
         "window_seconds": 10.0
     },
     "queues": {
@@ -11,26 +12,34 @@
         "market_threshold": 10000,
         "market_token_threshold": 5000,
         "price_threshold": 10000,
-        "leaderboard_threshold": 5000
+        "leaderboard_threshold": 5000,
+        "gamma_market_threshold": 1000,
+        "gamma_event_threshold": 1000,
+        "gamma_category_threshold": 1000
     },
     "output_dirs": {
         "trade": "data/trades",
         "market": "data/markets",
         "market_token": "data/market_tokens",
         "price": "data/prices",
-        "leaderboard": "data/leaderboard"
+        "leaderboard": "data/leaderboard",
+        "gamma_market": "data/gamma_markets",
+        "gamma_event": "data/gamma_events",
+        "gamma_category": "data/gamma_categories"
     },
     "api": {
         "data_api_base": "https://data-api.polymarket.com",
         "timeout": 30.0,
         "connect_timeout": 10.0,
-        "clob_api_base": "https://clob.polymarket.com"
+        "clob_api_base": "https://clob.polymarket.com",
+        "gamma_api_base": "https://gamma-api.polymarket.com"
     },
     "workers": {
         "trade": 2,
         "market": 1, 
         "price": 2,
-        "leaderboard": 1
+        "leaderboard": 1,
+        "gamma_market": 1
     },
     "cursors": {
         "enabled": true,

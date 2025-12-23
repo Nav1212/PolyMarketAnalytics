@@ -16,6 +16,7 @@ class RateLimitsConfig:
     market: int = 100
     price: int = 100
     leaderboard: int = 70
+    gamma_market: int = 100
     window_seconds: float = 10.0
 
 
@@ -27,6 +28,9 @@ class QueuesConfig:
     market_token_threshold: int = 5000
     price_threshold: int = 10000
     leaderboard_threshold: int = 5000
+    gamma_market_threshold: int = 1000
+    gamma_event_threshold: int = 1000
+    gamma_category_threshold: int = 1000
 
 
 @dataclass
@@ -46,6 +50,9 @@ class OutputDirsConfig:
     market_token: str = "data/market_tokens"
     price: str = "data/prices"
     leaderboard: str = "data/leaderboard"
+    gamma_market: str = "data/gamma_markets"
+    gamma_event: str = "data/gamma_events"
+    gamma_category: str = "data/gamma_categories"
 
 
 @dataclass
@@ -54,6 +61,7 @@ class ApiConfig:
     data_api_base: str = "https://data-api.polymarket.com"
     clob_api_base: str = "https://clob.polymarket.com"
     price_api_base: str = "https://clob.polymarket.com"
+    gamma_api_base: str = "https://gamma-api.polymarket.com"
     timeout: float = 30.0
     connect_timeout: float = 10.0
 
@@ -65,6 +73,7 @@ class WorkersConfig:
     market: int = 3
     price: int = 2
     leaderboard: int = 1
+    gamma_market: int = 1
 
 
 @dataclass

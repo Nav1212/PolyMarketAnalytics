@@ -22,11 +22,17 @@ from fetcher.persistence.parquet_persister import (
     create_market_token_persisted_queue,
     create_price_persisted_queue,
     create_leaderboard_persisted_queue,
+    create_gamma_market_persisted_queue,
+    create_gamma_event_persisted_queue,
+    create_gamma_category_persisted_queue,
     TRADE_SCHEMA,
     MARKET_SCHEMA,
     MARKET_TOKEN_SCHEMA,
     PRICE_SCHEMA,
     LEADERBOARD_SCHEMA,
+    GAMMA_MARKET_SCHEMA,
+    GAMMA_EVENT_SCHEMA,
+    GAMMA_CATEGORY_SCHEMA,
 )
 
 __all__ = [
@@ -39,9 +45,15 @@ __all__ = [
     "create_market_token_persisted_queue",
     "create_price_persisted_queue",
     "create_leaderboard_persisted_queue",
+    "create_gamma_market_persisted_queue",
+    "create_gamma_event_persisted_queue",
+    "create_gamma_category_persisted_queue",
     "TRADE_SCHEMA",
     "MARKET_SCHEMA",
     "MARKET_TOKEN_SCHEMA",
     "PRICE_SCHEMA",
     "LEADERBOARD_SCHEMA",
+    "GAMMA_MARKET_SCHEMA",
+    "GAMMA_EVENT_SCHEMA",
+    "GAMMA_CATEGORY_SCHEMA",
 ]
