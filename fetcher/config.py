@@ -16,6 +16,7 @@ class RateLimitsConfig:
     market: int = 100
     price: int = 100
     leaderboard: int = 70
+    gamma_market: int = 100
     window_seconds: float = 10.0
 
 
@@ -26,6 +27,19 @@ class QueuesConfig:
     market_threshold: int = 1000
     market_token_threshold: int = 5000
     price_threshold: int = 10000
+    leaderboard_threshold: int = 5000
+    gamma_market_threshold: int = 1000
+    gamma_event_threshold: int = 1000
+    gamma_category_threshold: int = 1000
+
+
+@dataclass
+class BatchSizesConfig:
+    """Batch size configuration (aliases queue thresholds for persistence)."""
+    trade: int = 10000
+    market: int = 1000
+    market_token: int = 5000
+    price: int = 10000
 
 
 @dataclass
@@ -35,6 +49,10 @@ class OutputDirsConfig:
     market: str = "data/markets"
     market_token: str = "data/market_tokens"
     price: str = "data/prices"
+    leaderboard: str = "data/leaderboard"
+    gamma_market: str = "data/gamma_markets"
+    gamma_event: str = "data/gamma_events"
+    gamma_category: str = "data/gamma_categories"
 
 
 @dataclass
@@ -42,6 +60,8 @@ class ApiConfig:
     """API configuration."""
     data_api_base: str = "https://data-api.polymarket.com"
     clob_api_base: str = "https://clob.polymarket.com"
+    price_api_base: str = "https://clob.polymarket.com"
+    gamma_api_base: str = "https://gamma-api.polymarket.com"
     timeout: float = 30.0
     connect_timeout: float = 10.0
 
@@ -53,6 +73,7 @@ class WorkersConfig:
     market: int = 3
     price: int = 2
     leaderboard: int = 1
+    gamma_market: int = 1
 
 
 @dataclass
@@ -60,6 +81,15 @@ class CursorsConfig:
     """Cursor persistence configuration."""
     enabled: bool = True
     filename: str = "cursor.json"
+
+
+@dataclass
+class RetryConfig:
+    """Retry configuration for failed worker executions."""
+    max_attempts: int = 3
+    base_delay: float = 1.0
+    max_delay: float = 30.0
+    exponential_base: float = 2.0
 
 
 @dataclass
@@ -71,6 +101,17 @@ class Config:
     api: ApiConfig = field(default_factory=ApiConfig)
     workers: WorkersConfig = field(default_factory=WorkersConfig)
     cursors: CursorsConfig = field(default_factory=CursorsConfig)
+    retry: RetryConfig = field(default_factory=RetryConfig)
+    
+    @property
+    def batch_sizes(self) -> BatchSizesConfig:
+        """Return batch sizes derived from queue thresholds."""
+        return BatchSizesConfig(
+            trade=self.queues.trade_threshold,
+            market=self.queues.market_threshold,
+            market_token=self.queues.market_token_threshold,
+            price=self.queues.price_threshold
+        )
     
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
@@ -81,7 +122,8 @@ class Config:
             output_dirs=OutputDirsConfig(**data.get("output_dirs", {})),
             api=ApiConfig(**data.get("api", {})),
             workers=WorkersConfig(**data.get("workers", {})),
-            cursors=CursorsConfig(**data.get("cursors", {}))
+            cursors=CursorsConfig(**data.get("cursors", {})),
+            retry=RetryConfig(**data.get("retry", {}))
         )
     
     def to_dict(self) -> dict:
@@ -120,6 +162,12 @@ class Config:
             "cursors": {
                 "enabled": self.cursors.enabled,
                 "filename": self.cursors.filename
+            },
+            "retry": {
+                "max_attempts": self.retry.max_attempts,
+                "base_delay": self.retry.base_delay,
+                "max_delay": self.retry.max_delay,
+                "exponential_base": self.retry.exponential_base
             }
         }
 
@@ -141,21 +189,21 @@ def load_config(config_path: Optional[str] = None) -> Config:
     global _config
     
     if config_path is None:
-        config_path = Path(__file__).parent / "config.json"
+        resolved_path = Path(__file__).parent / "config.json"
     else:
-        config_path = Path(config_path)
+        resolved_path = Path(config_path)
     
-    if config_path.exists():
+    if resolved_path.exists():
         try:
-            with open(config_path, 'r') as f:
+            with open(resolved_path, 'r') as f:
                 data = json.load(f)
             _config = Config.from_dict(data)
-            print(f"[Config] Loaded configuration from {config_path}")
+            print(f"[Config] Loaded configuration from {resolved_path}")
         except Exception as e:
-            print(f"[Config] Error loading {config_path}: {e}. Using defaults.")
+            print(f"[Config] Error loading {resolved_path}: {e}. Using defaults.")
             _config = Config()
     else:
-        print(f"[Config] {config_path} not found. Using defaults.")
+        print(f"[Config] {resolved_path} not found. Using defaults.")
         _config = Config()
     
     return _config
@@ -194,11 +242,11 @@ def save_config(config: Config, config_path: Optional[str] = None) -> None:
         config_path: Path to save to. If None, saves to default location.
     """
     if config_path is None:
-        config_path = Path(__file__).parent / "config.json"
+        resolved_path = Path(__file__).parent / "config.json"
     else:
-        config_path = Path(config_path)
+        resolved_path = Path(config_path)
     
-    with open(config_path, 'w') as f:
+    with open(resolved_path, 'w') as f:
         json.dump(config.to_dict(), f, indent=4)
     
-    print(f"[Config] Saved configuration to {config_path}")
+    print(f"[Config] Saved configuration to {resolved_path}")

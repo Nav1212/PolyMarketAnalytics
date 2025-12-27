@@ -43,7 +43,8 @@ def show_stats(conn: duckdb.DuckDBPyConnection) -> None:
     """Display basic statistics about the dataset."""
     print("\n=== Dataset Statistics ===")
     
-    count = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+    result = conn.execute("SELECT COUNT(*) FROM trades").fetchone()
+    count = result[0] if result else 0
     print(f"Total records: {count:,}")
     
     if count > 0:

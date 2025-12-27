@@ -17,9 +17,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import duckdb
 
-from swappable_queue import SwappableQueue
+from fetcher.persistence.swappable_queue import SwappableQueue
 from enum import Enum
+from fetcher.utils.logging_config import get_logger
+from fetcher.utils.exceptions import ParquetWriteError, CursorError
 
+logger = get_logger("parquet_persister")
 
 class DataType(Enum):
     """Supported data types for parquet persistence."""
@@ -27,6 +30,10 @@ class DataType(Enum):
     MARKET = "market"
     MARKET_TOKEN = "market_token"
     PRICE = "price"
+    LEADERBOARD = "leaderboard"
+    GAMMA_MARKET = "gamma_market"
+    GAMMA_EVENT = "gamma_event"
+    GAMMA_CATEGORY = "gamma_category"
 
 
 # =============================================================================
@@ -47,38 +54,102 @@ TRADE_SCHEMA = pa.schema([
     ('conditionId', pa.string()),
     ('timestamp', pa.int64()),
     ('transactionHash', pa.string()),
-    ('outcome', pa.string())
+    ('outcome', pa.string()),
+    ('name', pa.string()),
     # ('maker', pa.string()),
     # ('taker', pa.string()),
     # ('market', pa.string()),
     # ('asset_id', pa.string()),
     # ('trade_id', pa.string()),
-    # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------- 
 ])
+
+
 
 MARKET_SCHEMA = pa.schema([
     ('condition_Id', pa.string()),
     ('end_date_iso', pa.string()),   
     ('game_start_time', pa.string()),
     ('description', pa.string()),
+    ('question', pa.string()),
     ('maker_base_fee', pa.float64()),
     ('fpmm', pa.string()),
     ('question', pa.string()),
     ('closed', pa.bool_()),
-    ('active', pa.bool_())
+    ('active', pa.bool_()),
+    ('volume', pa.float64()),
+    ('liquidity', pa.float64()),
+    ('active', pa.bool8())
+
+])
+
+GAMMA_MARKET_SCHEMA = pa.schema([
+    ('id', pa.string()),
+    ('conditionId', pa.string()),
+    ('question', pa.string()),
+    ('slug', pa.string()),
+    ('category', pa.string()),
+    ('description', pa.string()),
+    ('liquidity', pa.string()),
+    ('volume', pa.string()),
+    ('active', pa.bool_()),
+    ('closed', pa.bool_()),
+    ('startDate', pa.string()),
+    ('endDate', pa.string()),
+    ('outcomes', pa.string()),
+    ('outcomePrices', pa.string()),
+    ('clobTokenIds', pa.string()),
+    ('volumeNum', pa.float64()),
+    ('liquidityNum', pa.float64()),
+    ('marketGroup', pa.int64()),
+])
+
+GAMMA_EVENT_SCHEMA = pa.schema([
+    ('marketId', pa.string()),  # FK to gamma market
+    ('eventId', pa.string()),
+    ('ticker', pa.string()),
+    ('slug', pa.string()),
+    ('title', pa.string()),
+    ('description', pa.string()),
+    ('category', pa.string()),
+    ('subcategory', pa.string()),
+    ('liquidity', pa.float64()),
+    ('volume', pa.float64()),
+    ('active', pa.bool_()),
+    ('closed', pa.bool_()),
+])
+
+GAMMA_CATEGORY_SCHEMA = pa.schema([
+    ('marketId', pa.string()),  # FK to gamma market
+    ('categoryId', pa.string()),
+    ('label', pa.string()),
+    ('parentCategory', pa.string()),
+    ('slug', pa.string()),
 ])
 
 MARKET_TOKEN_SCHEMA = pa.schema([
     ('condition_Id', pa.string()),
     ('price', pa.float64()),
     ('token_id', pa.string()),
-    ('winner', pa.bool_())
+    ('winner', pa.bool_()),
+    ('outcome', pa.string())
 ])
 
 PRICE_SCHEMA = pa.schema([
     ('timestamp', pa.int64()),
     ('token_id', pa.string()),
     ('price', pa.float64())
+])
+
+LEADERBOARD_SCHEMA = pa.schema([
+    ('rank', pa.string()),
+    ('proxyWallet', pa.string()),
+    ('userName', pa.string()),
+    ('xUsername', pa.string()),
+    ('verifiedBadge', pa.bool_()),
+    ('vol', pa.float64()),
+    ('pnl', pa.float64()),
+    ('profileImage', pa.string())
 ])
 
 
@@ -102,10 +173,10 @@ def load_cursor(output_dir: str, cursor_filename: str = "cursor.json") -> Option
         try:
             with open(cursor_path, 'r') as f:
                 cursor = json.load(f)
-            print(f"[Cursor] Loaded cursor from {cursor_path}")
+            logger.info(f"Loaded cursor from {cursor_path}")
             return cursor
         except Exception as e:
-            print(f"[Cursor] Error loading cursor from {cursor_path}: {e}")
+            logger.error(f"Error loading cursor from {cursor_path}: {e}")
             return None
     return None
 
@@ -133,9 +204,10 @@ def save_cursor(
     try:
         with open(cursor_path, 'w') as f:
             json.dump(cursor_data, f, indent=2)
-        print(f"[Cursor] Saved cursor to {cursor_path}")
+        logger.info(f"Saved cursor to {cursor_path}")
     except Exception as e:
-        print(f"[Cursor] Error saving cursor to {cursor_path}: {e}")
+        logger.error(f"Error saving cursor to {cursor_path}: {e}")
+        raise CursorError(f"Failed to save cursor: {e}", cursor_path=str(cursor_path))
 
 
 # =============================================================================
@@ -159,7 +231,7 @@ def load_market_parquet(
     path = Path(parquet_path)
     
     if not path.exists():
-        print(f"[Parquet] Path not found: {parquet_path}")
+        logger.warning(f"Path not found: {parquet_path}")
         return []
     
     try:
@@ -185,11 +257,11 @@ def load_market_parquet(
         conn.close()
         
         market_ids = [row[0] for row in result]
-        print(f"[Parquet] Loaded {len(market_ids)} market IDs from {parquet_path}")
+        logger.info(f"Loaded {len(market_ids)} market IDs from {parquet_path}")
         return market_ids
         
     except Exception as e:
-        print(f"[Parquet] Error loading markets from {parquet_path}: {e}")
+        logger.error(f"Error loading markets from {parquet_path}: {e}")
         return []
 
 
@@ -212,7 +284,7 @@ def load_parquet_data(
     path = Path(parquet_path)
     
     if not path.exists():
-        print(f"[Parquet] Path not found: {parquet_path}")
+        logger.warning(f"Path not found: {parquet_path}")
         return []
     
     try:
@@ -239,10 +311,11 @@ def load_parquet_data(
             result = conn.execute("SELECT * FROM data").fetchdf()
         
         conn.close()
-        return result.to_dict('records')
+        records: List[Dict[str, Any]] = [{str(k): v for k, v in record.items()} for record in result.to_dict('records')]
+        return records
         
     except Exception as e:
-        print(f"[Parquet] Error loading data from {parquet_path}: {e}")
+        logger.error(f"Error loading data from {parquet_path}: {e}")
         return []
 
 
@@ -326,7 +399,10 @@ class ParquetPersister:
             daemon=True
         )
         self._monitor_thread.start()
-        print(f"[ParquetPersister-{self._data_type.value}] Started monitoring queue (threshold={self._queue._threshold})")
+        logger.info(
+            f"Started monitoring queue for {self._data_type.value}",
+            extra={"data_type": self._data_type.value, "threshold": self._queue._threshold}
+        )
     
     def stop(self, timeout: float = 30.0) -> None:
         """
@@ -335,7 +411,7 @@ class ParquetPersister:
         Args:
             timeout: Maximum seconds to wait for threads to finish
         """
-        print(f"[ParquetPersister-{self._data_type.value}] Stopping...")
+        logger.info(f"Stopping ParquetPersister for {self._data_type.value}...")
         
         # Signal shutdown
         self._stop_event.set()
@@ -348,7 +424,10 @@ class ParquetPersister:
         # Flush any remaining items from data queue to write queue
         remaining = self._queue.drain()
         if remaining:
-            print(f"[ParquetPersister-{self._data_type.value}] Flushing {len(remaining)} remaining items...")
+            logger.info(
+                f"Flushing {len(remaining)} remaining items for {self._data_type.value}",
+                extra={"remaining_count": len(remaining)}
+            )
             self._write_queue.put(remaining)
         
         # Send sentinel to stop writer thread
@@ -358,7 +437,13 @@ class ParquetPersister:
         if self._writer_thread is not None:
             self._writer_thread.join(timeout=timeout)
         
-        print(f"[ParquetPersister-{self._data_type.value}] Stopped. Total files: {self._files_written}, Total records: {self._total_records_written}")
+        logger.info(
+            f"Stopped ParquetPersister for {self._data_type.value}",
+            extra={
+                "files_written": self._files_written,
+                "total_records": self._total_records_written
+            }
+        )
     
     def _monitor_loop(self) -> None:
         """Main loop that monitors data queue and sends batches to writer."""
@@ -398,7 +483,10 @@ class ParquetPersister:
                     break
                 continue
             except Exception as e:
-                print(f"[ParquetPersister-{self._data_type.value}] Writer error: {e}")
+                logger.exception(
+                    f"Writer error for {self._data_type.value}: {e}",
+                    extra={"data_type": self._data_type.value}
+                )
                 continue
 
     def _write_parquet(self, items: List[Dict[str, Any]]) -> None:
@@ -416,6 +504,14 @@ class ParquetPersister:
             self._write_market_token_parquet(items)
         elif self._data_type == DataType.PRICE:
             self._write_price_parquet(items)
+        elif self._data_type == DataType.LEADERBOARD:
+            self._write_leaderboard_parquet(items)
+        elif self._data_type == DataType.GAMMA_MARKET:
+            self._write_gamma_market_parquet(items)
+        elif self._data_type == DataType.GAMMA_EVENT:
+            self._write_gamma_event_parquet(items)
+        elif self._data_type == DataType.GAMMA_CATEGORY:
+            self._write_gamma_category_parquet(items)
         else:
             raise ValueError(f"Unknown data type: {self._data_type}")
 
@@ -466,12 +562,19 @@ class ParquetPersister:
                 self._total_records_written += len(items)
                 file_num = self._files_written
             
-            print(f"[ParquetPersister-trade] Written {len(items)} records to {filepath.name} (file #{file_num})")
+            logger.info(
+                f"Written {len(items)} trade records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
         
         except Exception as e:
-            print(f"[ParquetPersister-trade] Error writing parquet: {e}")
-            # TODO: Consider retry logic or dead-letter queue
-            raise
+            logger.exception(
+                f"Error writing trade parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
+            # Consider retry logic or dead-letter queue
+            raise ParquetWriteError(f"Failed to write trades: {e}", file_path=str(filepath) if 'filepath' in locals() else None)
+    
     def _write_market_token_parquet(self, items: List[Dict[str, Any]]) -> None:
         """
         Write a batch of items to a parquet file.
@@ -519,10 +622,17 @@ class ParquetPersister:
                 self._total_records_written += len(items)
                 file_num = self._files_written
             
-            print(f"[ParquetPersister-market_token] Written {len(items)} records to {filepath.name} (file #{file_num})")
+            logger.info(
+                f"Written {len(items)} market_token records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
         
         except Exception as e:
-            print(f"[ParquetPersister-market_token] Error writing parquet: {e}")
+            logger.exception(
+                f"Error writing market_token parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
+    
     def _write_market_parquet(self, items: List[Dict[str, Any]]) -> None:
         """
         Write a batch of items to a parquet file.
@@ -570,10 +680,16 @@ class ParquetPersister:
                 self._total_records_written += len(items)
                 file_num = self._files_written
             
-            print(f"[ParquetPersister-market] Written {len(items)} records to {filepath.name} (file #{file_num})")
+            logger.info(
+                f"Written {len(items)} market records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
         
         except Exception as e:
-            print(f"[ParquetPersister-market] Error writing parquet: {e}")
+            logger.exception(
+                f"Error writing market parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
 
     def _write_price_parquet(self, items: List[Dict[str, Any]]) -> None:
         """
@@ -620,10 +736,240 @@ class ParquetPersister:
                 self._total_records_written += len(items)
                 file_num = self._files_written
             
-            print(f"[ParquetPersister-price] Written {len(items)} records to {filepath.name} (file #{file_num})")
+            logger.info(
+                f"Written {len(items)} price records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
         
         except Exception as e:
-            print(f"[ParquetPersister-price] Error writing parquet: {e}")
+            logger.exception(
+                f"Error writing price parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
+
+    def _write_leaderboard_parquet(self, items: List[Dict[str, Any]]) -> None:
+        """
+        Write a batch of leaderboard items to a parquet file.
+        
+        Args:
+            items: List of leaderboard dictionaries to write
+        """
+        if not items:
+            return
+        
+        try:
+            timestamp = datetime.now()
+            
+            # Build output path
+            if self._use_hive_partitioning:
+                date_partition = timestamp.strftime("dt=%Y-%m-%d")
+                partition_dir = self._output_dir / date_partition
+                partition_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                partition_dir = self._output_dir
+            
+            filename = f"leaderboard_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.parquet"
+            filepath = partition_dir / filename
+            
+            # Convert to PyArrow table
+            if len(LEADERBOARD_SCHEMA) > 0:
+                table = pa.Table.from_pylist(items, schema=LEADERBOARD_SCHEMA)
+            else:
+                table = pa.Table.from_pylist(items)
+            
+            # Write parquet file
+            pq.write_table(
+                table,
+                filepath,
+                compression='snappy',
+                use_dictionary=True,
+                write_statistics=True
+            )
+            
+            # Update stats
+            with self._lock:
+                self._files_written += 1
+                self._total_records_written += len(items)
+                file_num = self._files_written
+            
+            logger.info(
+                f"Written {len(items)} leaderboard records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
+        
+        except Exception as e:
+            logger.exception(
+                f"Error writing leaderboard parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
+
+    def _write_gamma_market_parquet(self, items: List[Dict[str, Any]]) -> None:
+        """
+        Write a batch of Gamma market items to a parquet file.
+        
+        Args:
+            items: List of Gamma market dictionaries to write
+        """
+        if not items:
+            return
+        
+        try:
+            timestamp = datetime.now()
+            
+            # Build output path
+            if self._use_hive_partitioning:
+                date_partition = timestamp.strftime("dt=%Y-%m-%d")
+                partition_dir = self._output_dir / date_partition
+                partition_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                partition_dir = self._output_dir
+            
+            filename = f"gamma_markets_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.parquet"
+            filepath = partition_dir / filename
+            
+            # Convert to PyArrow table
+            if len(GAMMA_MARKET_SCHEMA) > 0:
+                table = pa.Table.from_pylist(items, schema=GAMMA_MARKET_SCHEMA)
+            else:
+                table = pa.Table.from_pylist(items)
+            
+            # Write parquet file
+            pq.write_table(
+                table,
+                filepath,
+                compression='snappy',
+                use_dictionary=True,
+                write_statistics=True
+            )
+            
+            # Update stats
+            with self._lock:
+                self._files_written += 1
+                self._total_records_written += len(items)
+                file_num = self._files_written
+            
+            logger.info(
+                f"Written {len(items)} gamma_market records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
+        
+        except Exception as e:
+            logger.exception(
+                f"Error writing gamma_market parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
+
+    def _write_gamma_event_parquet(self, items: List[Dict[str, Any]]) -> None:
+        """
+        Write a batch of Gamma event items to a parquet file.
+        
+        Args:
+            items: List of Gamma event dictionaries to write
+        """
+        if not items:
+            return
+        
+        try:
+            timestamp = datetime.now()
+            
+            # Build output path
+            if self._use_hive_partitioning:
+                date_partition = timestamp.strftime("dt=%Y-%m-%d")
+                partition_dir = self._output_dir / date_partition
+                partition_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                partition_dir = self._output_dir
+            
+            filename = f"gamma_events_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.parquet"
+            filepath = partition_dir / filename
+            
+            # Convert to PyArrow table
+            if len(GAMMA_EVENT_SCHEMA) > 0:
+                table = pa.Table.from_pylist(items, schema=GAMMA_EVENT_SCHEMA)
+            else:
+                table = pa.Table.from_pylist(items)
+            
+            # Write parquet file
+            pq.write_table(
+                table,
+                filepath,
+                compression='snappy',
+                use_dictionary=True,
+                write_statistics=True
+            )
+            
+            # Update stats
+            with self._lock:
+                self._files_written += 1
+                self._total_records_written += len(items)
+                file_num = self._files_written
+            
+            logger.info(
+                f"Written {len(items)} gamma_event records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
+        
+        except Exception as e:
+            logger.exception(
+                f"Error writing gamma_event parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
+
+    def _write_gamma_category_parquet(self, items: List[Dict[str, Any]]) -> None:
+        """
+        Write a batch of Gamma category items to a parquet file.
+        
+        Args:
+            items: List of Gamma category dictionaries to write
+        """
+        if not items:
+            return
+        
+        try:
+            timestamp = datetime.now()
+            
+            # Build output path
+            if self._use_hive_partitioning:
+                date_partition = timestamp.strftime("dt=%Y-%m-%d")
+                partition_dir = self._output_dir / date_partition
+                partition_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                partition_dir = self._output_dir
+            
+            filename = f"gamma_categories_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.parquet"
+            filepath = partition_dir / filename
+            
+            # Convert to PyArrow table
+            if len(GAMMA_CATEGORY_SCHEMA) > 0:
+                table = pa.Table.from_pylist(items, schema=GAMMA_CATEGORY_SCHEMA)
+            else:
+                table = pa.Table.from_pylist(items)
+            
+            # Write parquet file
+            pq.write_table(
+                table,
+                filepath,
+                compression='snappy',
+                use_dictionary=True,
+                write_statistics=True
+            )
+            
+            # Update stats
+            with self._lock:
+                self._files_written += 1
+                self._total_records_written += len(items)
+                file_num = self._files_written
+            
+            logger.info(
+                f"Written {len(items)} gamma_category records to {filepath.name}",
+                extra={"file_num": file_num, "record_count": len(items), "filepath": str(filepath)}
+            )
+        
+        except Exception as e:
+            logger.exception(
+                f"Error writing gamma_category parquet: {e}",
+                extra={"filepath": str(filepath) if 'filepath' in locals() else None}
+            )
 
     @property
     def stats(self) -> Dict[str, int]:
@@ -784,5 +1130,105 @@ def create_price_persisted_queue(
         threshold=threshold,
         output_dir=output_dir,
         data_type=DataType.PRICE,
+        auto_start=auto_start
+    )
+
+
+def create_leaderboard_persisted_queue(
+    threshold: int = 5000,
+    output_dir: str = "data/leaderboard",
+    auto_start: bool = True
+) -> tuple[SwappableQueue, ParquetPersister]:
+    """
+    Create a queue with attached parquet persister for leaderboard data.
+    Convenience wrapper around create_persisted_queue.
+    
+    Args:
+        threshold: Number of items that triggers a write
+        output_dir: Directory for parquet files
+        auto_start: Start the persister immediately
+    
+    Returns:
+        Tuple of (queue, persister)
+    """
+    return create_persisted_queue(
+        threshold=threshold,
+        output_dir=output_dir,
+        data_type=DataType.LEADERBOARD,
+        auto_start=auto_start
+    )
+
+
+def create_gamma_market_persisted_queue(
+    threshold: int = 1000,
+    output_dir: str = "data/gamma_markets",
+    auto_start: bool = True
+) -> tuple[SwappableQueue, ParquetPersister]:
+    """
+    Create a queue with attached parquet persister for Gamma market data.
+    Convenience wrapper around create_persisted_queue.
+    
+    Args:
+        threshold: Number of items that triggers a write
+        output_dir: Directory for parquet files
+        auto_start: Start the persister immediately
+    
+    Returns:
+        Tuple of (queue, persister)
+    """
+    return create_persisted_queue(
+        threshold=threshold,
+        output_dir=output_dir,
+        data_type=DataType.GAMMA_MARKET,
+        auto_start=auto_start
+    )
+
+
+def create_gamma_event_persisted_queue(
+    threshold: int = 1000,
+    output_dir: str = "data/gamma_events",
+    auto_start: bool = True
+) -> tuple[SwappableQueue, ParquetPersister]:
+    """
+    Create a queue with attached parquet persister for Gamma event data.
+    Convenience wrapper around create_persisted_queue.
+    
+    Args:
+        threshold: Number of items that triggers a write
+        output_dir: Directory for parquet files
+        auto_start: Start the persister immediately
+    
+    Returns:
+        Tuple of (queue, persister)
+    """
+    return create_persisted_queue(
+        threshold=threshold,
+        output_dir=output_dir,
+        data_type=DataType.GAMMA_EVENT,
+        auto_start=auto_start
+    )
+
+
+def create_gamma_category_persisted_queue(
+    threshold: int = 1000,
+    output_dir: str = "data/gamma_categories",
+    auto_start: bool = True
+) -> tuple[SwappableQueue, ParquetPersister]:
+    """
+    Create a queue with attached parquet persister for Gamma category data.
+    Convenience wrapper around create_persisted_queue.
+    
+    Args:
+        threshold: Number of items that triggers a write
+        output_dir: Directory for parquet files
+        auto_start: Start the persister immediately
+    
+    Returns:
+        Tuple of (queue, persister)
+    """
+    return create_persisted_queue(
+        threshold=threshold,
+        output_dir=output_dir,
+        data_type=DataType.GAMMA_CATEGORY,
         auto_start=auto_start
     )

@@ -161,3 +161,38 @@ class SwappableQueue:
     def __len__(self) -> int:
         """Return current size of queue."""
         return self.size()
+    
+    def qsize(self) -> int:
+        """Return current number of items in queue. Compatible with Queue interface."""
+        return self.size()
+    
+    def get(self, block: bool = True, timeout: Optional[float] = None) -> Any:
+        """
+        Get and remove an item from the queue. Compatible with Queue interface.
+        
+        Args:
+            block: If True and queue is empty, wait for an item
+            timeout: Maximum time to wait (only used if block=True)
+            
+        Returns:
+            The first item in the queue
+            
+        Raises:
+            IndexError: If queue is empty and block=False
+        """
+        import time as time_module
+        start = time_module.time()
+        while True:
+            with self._lock:
+                if self._item_count > 0:
+                    item = self._buffer.popleft()
+                    self._item_count -= 1
+                    return item
+            
+            if not block:
+                raise IndexError("Queue is empty")
+            
+            if timeout is not None and (time_module.time() - start) >= timeout:
+                raise IndexError("Queue get timed out")
+            
+            time_module.sleep(0.01)  # Small sleep to avoid busy waiting

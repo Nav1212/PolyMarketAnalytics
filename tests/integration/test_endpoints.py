@@ -1,25 +1,30 @@
 """
 Endpoint and Worker Testing Script
 Tests each API endpoint, measures response times, and saves responses to separate text files.
+
+This is a standalone test script that can be run directly or via pytest.
+Run with: python -m tests.integration.test_endpoints
+Or:       pytest tests/integration/test_endpoints.py -v
 """
 
 import os
+import sys
 import time
 import json
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Tuple
 
-from config import get_config, Config
-from worker_manager import WorkerManager
-from market_fetcher import MarketFetcher
-from trade_fetcher import TradeFetcher
-from price_fetcher import PriceFetcher
-from leaderboard_fetcher import LeaderboardFetcher
+# Add project root to path for fetcher package imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from fetcher.config import get_config, Config
+from fetcher.workers import WorkerManager, MarketFetcher, TradeFetcher, PriceFetcher, LeaderboardFetcher
 
 
-# Output directory for test results
-OUTPUT_DIR = Path("test_results")
+# Output directory for test results (relative to fetcher directory)
+FETCHER_DIR = Path(__file__).parent.parent.parent / "fetcher"
+OUTPUT_DIR = FETCHER_DIR / "test_results"
 
 
 def ensure_output_dir():
@@ -91,7 +96,7 @@ def test_market_endpoint() -> Tuple[Any, Dict[str, float]]:
             request_end = time.time()
             timing['request_time'] = request_end - request_start
             
-            data = response
+            data: Dict[str, Any] = response  # type: ignore[assignment]
             markets = data.get("data", [])
             print(f"  Fetched {len(markets)} markets")
             
@@ -194,9 +199,8 @@ def test_price_endpoint() -> Tuple[Any, Dict[str, float]]:
     timing = {}
     total_start = time.time()
     
-    # Use a known token ID for testing
-    # You can replace this with any valid token_id
-    test_token = "21742633143463906290569050155826241533067272736897614950488156847949938836455"
+    # Use a known active token with price data (US recession 2025 market)
+    test_token = "104173557214744537570424345347209544585775842950109756851652855913015295701992"
     
     with PriceFetcher(worker_manager=worker_manager, config=config) as fetcher:
         print(f"  Fetching price history for token: {test_token[:20]}...")
@@ -216,7 +220,7 @@ def test_price_endpoint() -> Tuple[Any, Dict[str, float]]:
                 token_id=test_token,
                 start_ts=start_ts,
                 end_ts=end_ts,
-                resolution="1h"
+                fidelity=60  # ~hourly granularity (60 data points per day)
             )
             request_end = time.time()
             timing['request_time'] = request_end - request_start
@@ -228,7 +232,7 @@ def test_price_endpoint() -> Tuple[Any, Dict[str, float]]:
                 "token_id": test_token,
                 "start_ts": start_ts,
                 "end_ts": end_ts,
-                "resolution": "1h",
+                "fidelity": 60,
                 "total_prices": len(prices),
                 "sample_prices": prices[:10] if len(prices) > 10 else prices
             }
@@ -279,7 +283,6 @@ def test_leaderboard_endpoint() -> Tuple[Any, Dict[str, float]]:
         try:
             # Get first batch from leaderboard generator
             leaderboard_gen = fetcher.fetch_leaderboard(
-                market=test_market,
                 category="OVERALL",
                 timePeriod="DAY"
             )
@@ -437,10 +440,10 @@ def run_warmup():
             end_ts = int(datetime.now().timestamp())
             start_ts = end_ts - 3600
             fetcher.fetch_price_history(
-                token_id="21742633143463906290569050155826241533067272736897614950488156847949938836455",
+                token_id="104173557214744537570424345347209544585775842950109756851652855913015295701992",
                 start_ts=start_ts,
                 end_ts=end_ts,
-                resolution="1h"
+                fidelity=60
             )
         print("  ✓ Price warmup complete")
     except Exception as e:

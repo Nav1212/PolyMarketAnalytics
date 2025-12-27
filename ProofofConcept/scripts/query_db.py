@@ -171,8 +171,10 @@ def interactive_mode(db_path: str):
                     try:
                         count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                         print(f"{table:30s} {count:>15,} rows")
-                    except:
-                        print(f"{table:30s} {'Error':>15}")
+                    except duckdb.CatalogException:
+                        print(f"{table:30s} {'Table not found':>15}")
+                    except Exception as e:
+                        print(f"{table:30s} {'Error: ' + str(e)[:20]:>15}")
                 print()
                 continue
             

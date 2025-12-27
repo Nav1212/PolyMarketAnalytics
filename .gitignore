@@ -1,6 +1,10 @@
 # Data files
 data/
 *.parquet
+m
+# State/cursor files (runtime data)
+fetcher/downstream_queues.json
+fetcher/cursor.json
 
 # Python
 __pycache__/
