@@ -72,7 +72,7 @@ custom,polymarket_silver,MarketDim,created_at,9,TIMESTAMP,N,N,N,N,N
 custom,polymarket_silver,MarketDim,updated_at,10,TIMESTAMP,N,N,N,N,N
 custom,polymarket_silver,MarketTokenDim,token_sk,1,INTEGER,N,PRIMARY KEY,N,N,N
 custom,polymarket_silver,MarketTokenDim,token_id,2,VARCHAR,N,UNIQUE,N,N,N
-custom,polymarket_silver,MarketTokenDim,market_sk,3,INTEGER,N,FOREIGN KEY,polymarket_silver,MarketDim,market_sk
+custom,polymarket_silver,MarketTokenDim,market_id,3,INTEGER,N,FOREIGN KEY,polymarket_silver,MarketDim,market_id
 custom,polymarket_silver,MarketTokenDim,outcome,4,VARCHAR,N,N,N,N,N
 custom,polymarket_silver,MarketTokenDim,is_winner,5,BOOLEAN,N,N,N,N,N
 custom,polymarket_silver,MarketTokenDim,created_at,6,TIMESTAMP,N,N,N,N,N
