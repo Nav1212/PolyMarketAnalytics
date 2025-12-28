@@ -151,6 +151,7 @@ data/trades/dt=2024-12-26/trades_20241226_143022_123456.parquet
 vc  <img width="1391" height="594" alt="image" src="https://github.com/user-attachments/assets/d3726982-5138-43e3-90d6-98e1daece318" />
 
 ### Silver Layer (DuckDB)
+Prototype Implemented transformation untested
 Structured data warehouse with dimension and fact tables:
 - **MarketDim** - Market metadata
 - **MarketTokenDim** - Outcome tokens per market
@@ -159,6 +160,7 @@ Structured data warehouse with dimension and fact tables:
 - **PriceHistoryFact** - Historical prices
 
 ### Gold Layer (Analytics)
+Unimplemented
 Aggregated views and reports for analysis.
 
 ## Configuration
