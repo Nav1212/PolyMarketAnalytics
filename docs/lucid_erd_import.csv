@@ -1,0 +1,106 @@
+custom,polymarket_bronze,trades,conditionId,1,STRING,N,N,N,N,N
+custom,polymarket_bronze,trades,timestamp,2,INT64,N,N,N,N,N
+custom,polymarket_bronze,trades,price,3,FLOAT64,N,N,N,N,N
+custom,polymarket_bronze,trades,side,4,STRING,4,N,N,N,N
+custom,polymarket_bronze,trades,size,5,FLOAT64,N,N,N,N,N
+custom,polymarket_bronze,trades,maker,6,STRING,42,N,N,N,N
+custom,polymarket_bronze,trades,taker,7,STRING,42,N,N,N,N
+custom,polymarket_bronze,trades,transactionHash,8,STRING,66,N,N,N,N
+custom,polymarket_bronze,trades,outcome,9,STRING,N,N,N,N,N
+custom,polymarket_bronze,trades,dt,10,STRING,10,N,N,N,N
+custom,polymarket_bronze,markets,condition_id,1,STRING,N,PRIMARY KEY,N,N,N
+custom,polymarket_bronze,markets,question,2,STRING,N,N,N,N,N
+custom,polymarket_bronze,markets,description,3,STRING,N,N,N,N,N
+custom,polymarket_bronze,markets,market_slug,4,STRING,N,N,N,N,N
+custom,polymarket_bronze,markets,end_date_iso,5,STRING,N,N,N,N,N
+custom,polymarket_bronze,markets,game_start_time,6,STRING,N,N,N,N,N
+custom,polymarket_bronze,markets,active,7,BOOLEAN,N,N,N,N,N
+custom,polymarket_bronze,markets,closed,8,BOOLEAN,N,N,N,N,N
+custom,polymarket_bronze,markets,archived,9,BOOLEAN,N,N,N,N,N
+custom,polymarket_bronze,markets,accepting_orders,10,BOOLEAN,N,N,N,N,N
+custom,polymarket_bronze,markets,enable_order_book,11,BOOLEAN,N,N,N,N,N
+custom,polymarket_bronze,markets,minimum_order_size,12,FLOAT64,N,N,N,N,N
+custom,polymarket_bronze,markets,minimum_tick_size,13,FLOAT64,N,N,N,N,N
+custom,polymarket_bronze,markets,dt,14,STRING,10,N,N,N,N
+custom,polymarket_bronze,market_tokens,condition_id,1,STRING,N,FOREIGN KEY,polymarket_bronze,markets,condition_id
+custom,polymarket_bronze,market_tokens,token_id,2,STRING,N,PRIMARY KEY,N,N,N
+custom,polymarket_bronze,market_tokens,outcome,3,STRING,N,N,N,N,N
+custom,polymarket_bronze,market_tokens,winner,4,BOOLEAN,N,N,N,N,N
+custom,polymarket_bronze,market_tokens,dt,5,STRING,10,N,N,N,N
+custom,polymarket_bronze,prices,token_id,1,STRING,N,FOREIGN KEY,polymarket_bronze,market_tokens,token_id
+custom,polymarket_bronze,prices,timestamp,2,INT64,N,N,N,N,N
+custom,polymarket_bronze,prices,price,3,FLOAT64,N,N,N,N,N
+custom,polymarket_bronze,prices,dt,4,STRING,10,N,N,N,N
+custom,polymarket_bronze,leaderboard,rank,1,INT64,N,N,N,N,N
+custom,polymarket_bronze,leaderboard,maker,2,STRING,42,N,N,N,N
+custom,polymarket_bronze,leaderboard,volume,3,FLOAT64,N,N,N,N,N
+custom,polymarket_bronze,leaderboard,profit,4,FLOAT64,N,N,N,N,N
+custom,polymarket_bronze,leaderboard,marketsTraded,5,INT64,N,N,N,N,N
+custom,polymarket_bronze,leaderboard,dt,6,STRING,10,N,N,N,N
+custom,polymarket_bronze,gamma_markets,id,1,STRING,N,PRIMARY KEY,N,N,N
+custom,polymarket_bronze,gamma_markets,condition_id,2,STRING,N,N,N,N,N
+custom,polymarket_bronze,gamma_markets,slug,3,STRING,N,N,N,N,N
+custom,polymarket_bronze,gamma_markets,question,4,STRING,N,N,N,N,N
+custom,polymarket_bronze,gamma_markets,description,5,STRING,N,N,N,N,N
+custom,polymarket_bronze,gamma_markets,outcomes,6,STRING,N,N,N,N,N
+custom,polymarket_bronze,gamma_markets,outcome_prices,7,STRING,N,N,N,N,N
+custom,polymarket_bronze,gamma_markets,volume,8,FLOAT64,N,N,N,N,N
+custom,polymarket_bronze,gamma_markets,liquidity,9,FLOAT64,N,N,N,N,N
+custom,polymarket_bronze,gamma_markets,start_date,10,STRING,N,N,N,N,N
+custom,polymarket_bronze,gamma_markets,end_date,11,STRING,N,N,N,N,N
+custom,polymarket_bronze,gamma_markets,event_id,12,STRING,N,FOREIGN KEY,polymarket_bronze,gamma_events,id
+custom,polymarket_bronze,gamma_markets,dt,13,STRING,10,N,N,N,N
+custom,polymarket_bronze,gamma_events,id,1,STRING,N,PRIMARY KEY,N,N,N
+custom,polymarket_bronze,gamma_events,slug,2,STRING,N,N,N,N,N
+custom,polymarket_bronze,gamma_events,title,3,STRING,N,N,N,N,N
+custom,polymarket_bronze,gamma_events,description,4,STRING,N,N,N,N,N
+custom,polymarket_bronze,gamma_events,category_id,5,STRING,N,FOREIGN KEY,polymarket_bronze,gamma_categories,id
+custom,polymarket_bronze,gamma_events,dt,6,STRING,10,N,N,N,N
+custom,polymarket_bronze,gamma_categories,id,1,STRING,N,PRIMARY KEY,N,N,N
+custom,polymarket_bronze,gamma_categories,label,2,STRING,N,N,N,N,N
+custom,polymarket_bronze,gamma_categories,slug,3,STRING,N,N,N,N,N
+custom,polymarket_bronze,gamma_categories,dt,4,STRING,10,N,N,N,N
+custom,polymarket_silver,MarketDim,market_sk,1,INTEGER,N,PRIMARY KEY,N,N,N
+custom,polymarket_silver,MarketDim,condition_id,2,VARCHAR,N,UNIQUE,N,N,N
+custom,polymarket_silver,MarketDim,question,3,VARCHAR,N,N,N,N,N
+custom,polymarket_silver,MarketDim,description,4,VARCHAR,N,N,N,N,N
+custom,polymarket_silver,MarketDim,market_slug,5,VARCHAR,N,N,N,N,N
+custom,polymarket_silver,MarketDim,end_date,6,TIMESTAMP,N,N,N,N,N
+custom,polymarket_silver,MarketDim,is_active,7,BOOLEAN,N,N,N,N,N
+custom,polymarket_silver,MarketDim,is_closed,8,BOOLEAN,N,N,N,N,N
+custom,polymarket_silver,MarketDim,created_at,9,TIMESTAMP,N,N,N,N,N
+custom,polymarket_silver,MarketDim,updated_at,10,TIMESTAMP,N,N,N,N,N
+custom,polymarket_silver,MarketTokenDim,token_sk,1,INTEGER,N,PRIMARY KEY,N,N,N
+custom,polymarket_silver,MarketTokenDim,token_id,2,VARCHAR,N,UNIQUE,N,N,N
+custom,polymarket_silver,MarketTokenDim,market_id,3,INTEGER,N,FOREIGN KEY,polymarket_silver,MarketDim,market_id
+custom,polymarket_silver,MarketTokenDim,outcome,4,VARCHAR,N,N,N,N,N
+custom,polymarket_silver,MarketTokenDim,is_winner,5,BOOLEAN,N,N,N,N,N
+custom,polymarket_silver,MarketTokenDim,created_at,6,TIMESTAMP,N,N,N,N,N
+custom,polymarket_silver,TraderDim,trader_sk,1,INTEGER,N,PRIMARY KEY,N,N,N
+custom,polymarket_silver,TraderDim,wallet_address,2,VARCHAR,42,UNIQUE,N,N,N
+custom,polymarket_silver,TraderDim,first_seen_at,3,TIMESTAMP,N,N,N,N,N
+custom,polymarket_silver,TraderDim,last_seen_at,4,TIMESTAMP,N,N,N,N,N
+custom,polymarket_silver,TraderDim,created_at,5,TIMESTAMP,N,N,N,N,N
+custom,polymarket_silver,TradeFact,trade_sk,1,INTEGER,N,PRIMARY KEY,N,N,N
+custom,polymarket_silver,TradeFact,market_sk,2,INTEGER,N,FOREIGN KEY,polymarket_silver,MarketDim,market_sk
+custom,polymarket_silver,TradeFact,token_sk,3,INTEGER,N,FOREIGN KEY,polymarket_silver,MarketTokenDim,token_sk
+custom,polymarket_silver,TradeFact,maker_sk,4,INTEGER,N,FOREIGN KEY,polymarket_silver,TraderDim,trader_sk
+custom,polymarket_silver,TradeFact,taker_sk,5,INTEGER,N,FOREIGN KEY,polymarket_silver,TraderDim,trader_sk
+custom,polymarket_silver,TradeFact,trade_timestamp,6,TIMESTAMP,N,N,N,N,N
+custom,polymarket_silver,TradeFact,price,7,DECIMAL,10,N,N,N,N
+custom,polymarket_silver,TradeFact,size,8,DECIMAL,18,N,N,N,N
+custom,polymarket_silver,TradeFact,side,9,VARCHAR,4,N,N,N,N
+custom,polymarket_silver,TradeFact,transaction_hash,10,VARCHAR,66,N,N,N,N
+custom,polymarket_silver,TradeFact,trade_date,11,DATE,N,N,N,N,N
+custom,polymarket_silver,PriceHistoryFact,price_sk,1,INTEGER,N,PRIMARY KEY,N,N,N
+custom,polymarket_silver,PriceHistoryFact,token_sk,2,INTEGER,N,FOREIGN KEY,polymarket_silver,MarketTokenDim,token_sk
+custom,polymarket_silver,PriceHistoryFact,price_timestamp,3,TIMESTAMP,N,N,N,N,N
+custom,polymarket_silver,PriceHistoryFact,price,4,DECIMAL,10,N,N,N,N
+custom,polymarket_silver,PriceHistoryFact,price_date,5,DATE,N,N,N,N,N
+custom,polymarket_silver,LeaderboardSnapshot,snapshot_sk,1,INTEGER,N,PRIMARY KEY,N,N,N
+custom,polymarket_silver,LeaderboardSnapshot,trader_sk,2,INTEGER,N,FOREIGN KEY,polymarket_silver,TraderDim,trader_sk
+custom,polymarket_silver,LeaderboardSnapshot,snapshot_date,3,DATE,N,N,N,N,N
+custom,polymarket_silver,LeaderboardSnapshot,rank,4,INTEGER,N,N,N,N,N
+custom,polymarket_silver,LeaderboardSnapshot,volume,5,DECIMAL,18,N,N,N,N
+custom,polymarket_silver,LeaderboardSnapshot,profit,6,DECIMAL,18,N,N,N,N
+custom,polymarket_silver,LeaderboardSnapshot,markets_traded,7,INTEGER,N,N,N,N,N
