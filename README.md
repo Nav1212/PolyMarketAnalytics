@@ -9,7 +9,8 @@ This project implements a production-grade ETL pipeline that:
 - Handles rate limiting with token bucket algorithm
 - Persists data to Parquet files with Hive partitioning
 - Supports cursor-based resumable fetching
-- Transforms raw data into a structured DuckDB data warehouse
+- Transforms raw data into a structured DuckDB data warehouse (Silver layer)
+- Provides Bronze-to-Silver ETL transformers for dimension and fact tables
 
 ## Architecture
 
@@ -30,7 +31,7 @@ For detailed system diagrams, see [SYSTEM_DIAGRAM.md](SYSTEM_DIAGRAM.md).
         v                      v                      v
 +------------------------------------------------------------------+
 |                     RATE LIMITER (Token Bucket)                   |
-|         Trade: 70/10s | Market: 100/10s | Price: 100/10s         |
+|   Trade: 70/10s | Market: 100/10s | Price: 100/10s | Gamma: 100/10s  |
 +------------------------------------------------------------------+
         |
         v
@@ -121,9 +122,21 @@ PolyMarketScrapping/
 │       ├── exceptions.py
 │       ├── retry.py
 │       └── logging_config.py
-├── scripts/                    # ETL and utility scripts
+├── Ingestion/                  # Bronze-to-Silver transformations
+│   ├── silver_create.py        # Create Silver layer schema in DuckDB
+│   ├── silver_loader.py        # Orchestrates transformation pipeline
+│   ├── load_silver.py          # Entry point for loading Silver layer
+│   └── transformers/           # ETL transformers
+│       ├── base.py             # Base transformer class
+│       ├── market_dim.py       # MarketDim transformer (market metadata)
+│       ├── market_token_dim.py # MarketTokenDim transformer (outcome tokens)
+│       └── trader_dim.py       # TraderDim transformer (wallet addresses)
+├── scripts/                    # Utility scripts
 │   ├── reload_from_staging.py  # Load Bronze -> Silver
-│   └── ...
+│   ├── recreate_marketdim.py   # Recreate MarketDim table
+│   ├── reload_marketdim.py     # Reload MarketDim from parquet
+│   ├── load_market_tokens.py   # Load market tokens from Bronze
+│   └── debug_clear.py          # Debug utilities
 ├── data/                       # Bronze layer (Parquet files)
 │   ├── trades/dt=YYYY-MM-DD/
 │   ├── markets/dt=YYYY-MM-DD/
@@ -134,6 +147,8 @@ PolyMarketScrapping/
 │   ├── gamma_events/
 │   └── gamma_categories/
 ├── tests/                      # Unit and integration tests
+│   ├── unit/                   # Unit tests
+│   └── integration/            # Integration tests
 ├── ProofofConcept/             # Legacy prototype scripts
 ├── SYSTEM_DIAGRAM.md           # Detailed architecture diagrams
 └── README.md                   # This file
@@ -149,14 +164,29 @@ data/trades/dt=2024-12-26/trades_20241226_143022_123456.parquet
 
 ### Silver Layer (DuckDB)
 Structured data warehouse with dimension and fact tables:
-- **MarketDim** - Market metadata
+- **MarketDim** - Market metadata (merged from CLOB and Gamma APIs)
 - **MarketTokenDim** - Outcome tokens per market
-- **TraderDim** - Wallet addresses
-- **TradeFact** - Individual trades
+- **TraderDim** - Normalized wallet addresses
+- **TradeFact** - Individual trades with foreign keys
 - **PriceHistoryFact** - Historical prices
 
+Load Silver layer from Bronze:
+```bash
+# Default paths
+python -m Ingestion.load_silver
+
+# Custom paths and options
+python -m Ingestion.load_silver --bronze data --silver path/to/silver.duckdb
+
+# Adjust worker scaling
+python -m Ingestion.load_silver --min-workers 2 --max-workers 16
+
+# Preview what would be loaded
+python -m Ingestion.load_silver --dry-run
+```
+
 ### Gold Layer (Analytics)
-Aggregated views and reports for analysis.
+Aggregated views and reports for analysis (in development).
 
 ## Configuration
 
@@ -169,17 +199,31 @@ Edit `fetcher/config.json` to customize:
     "market": 100,
     "price": 100,
     "leaderboard": 70,
+    "gamma_market": 100,
     "window_seconds": 10.0
   },
   "workers": {
     "trade": 2,
     "market": 1,
     "price": 2,
-    "leaderboard": 1
+    "leaderboard": 1,
+    "gamma_market": 1
   },
   "queues": {
     "trade_threshold": 10000,
-    "market_threshold": 10000
+    "market_threshold": 10000,
+    "market_token_threshold": 5000,
+    "price_threshold": 10000,
+    "leaderboard_threshold": 5000,
+    "gamma_market_threshold": 1000,
+    "gamma_event_threshold": 1000,
+    "gamma_category_threshold": 1000
+  },
+  "retry": {
+    "max_attempts": 3,
+    "base_delay": 1.0,
+    "max_delay": 30.0,
+    "exponential_base": 2.0
   }
 }
 ```

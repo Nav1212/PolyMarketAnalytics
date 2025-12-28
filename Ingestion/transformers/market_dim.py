@@ -371,9 +371,10 @@ class MarketDimTransformer(BaseTransformer):
                     self._records_updated += 1
                 else:
                     # Get next market_id
-                    max_id = self.conn.execute(
+                    result = self.conn.execute(
                         "SELECT COALESCE(MAX(market_id), 0) FROM MarketDim"
-                    ).fetchone()[0]
+                    ).fetchone()
+                    max_id = result[0] if result else 0
                     new_id = max_id + 1
 
                     # Insert new market

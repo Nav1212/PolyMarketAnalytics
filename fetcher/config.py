@@ -92,6 +92,120 @@ class RetryConfig:
     exponential_base: float = 2.0
 
 
+# =============================================================================
+# NLP Enrichment Configuration
+# =============================================================================
+
+@dataclass
+class OllamaConfig:
+    """
+    Configuration for Ollama LLM server connection.
+
+    Ollama runs locally and provides access to various open-source models
+    like Llama, Mistral, etc. for text generation and embedding.
+
+    Attributes:
+        base_url: Ollama API base URL (default: localhost:11434)
+        timeout: Request timeout in seconds for generation (can be long)
+        connect_timeout: Connection establishment timeout
+        embedding_model: Model to use for generating embeddings
+        generation_model: Model to use for text generation tasks
+        retry_max_attempts: Maximum retry attempts for failed requests
+        retry_base_delay: Base delay between retries (exponential backoff)
+        retry_max_delay: Maximum delay between retries
+    """
+    base_url: str = "http://localhost:11434"
+    timeout: float = 300.0  # LLM generation can be slow
+    connect_timeout: float = 10.0
+    embedding_model: str = "nomic-embed-text"  # 768 dimensions, good quality
+    generation_model: str = "llama3.2"  # Default generation model
+    retry_max_attempts: int = 3
+    retry_base_delay: float = 1.0
+    retry_max_delay: float = 60.0
+
+
+@dataclass
+class EmbeddingCacheConfig:
+    """
+    Configuration for embedding cache behavior.
+
+    Embeddings are expensive to compute, so we cache them to avoid
+    recomputation. This config controls cache behavior.
+
+    Attributes:
+        enabled: Whether to use caching
+        max_memory_items: Maximum items to keep in memory cache (LRU eviction)
+        persist_to_db: Whether to persist embeddings to DuckDB
+        batch_persist_threshold: Number of new embeddings before batch persist
+    """
+    enabled: bool = True
+    max_memory_items: int = 10000
+    persist_to_db: bool = True
+    batch_persist_threshold: int = 100
+
+
+@dataclass
+class EmbeddingConfig:
+    """
+    Configuration for the embedding service.
+
+    Attributes:
+        batch_size: Number of texts to embed in a single batch
+        normalize: Whether to L2-normalize embedding vectors
+        cache: Cache configuration
+        dimension: Expected embedding dimension (model-dependent)
+    """
+    batch_size: int = 32
+    normalize: bool = True
+    cache: EmbeddingCacheConfig = field(default_factory=EmbeddingCacheConfig)
+    dimension: int = 768  # nomic-embed-text default
+
+
+@dataclass
+class ModelCouncilConfig:
+    """
+    Configuration for the model council voting system.
+
+    The council runs multiple models on the same task and aggregates
+    their responses using voting. This improves accuracy and reliability.
+
+    Attributes:
+        models: List of model names to use in the council
+        require_unanimous: Whether unanimous agreement is required
+        min_votes_for_majority: Minimum votes needed for majority decision
+        timeout_per_model: Timeout for each model's response
+        parallel_execution: Whether to run models in parallel
+    """
+    models: list = field(default_factory=lambda: ["llama3.2", "mistral", "phi3"])
+    require_unanimous: bool = False
+    min_votes_for_majority: int = 2
+    timeout_per_model: float = 120.0
+    parallel_execution: bool = True
+
+
+@dataclass
+class NLPEnrichmentConfig:
+    """
+    Master configuration for the NLP enrichment system.
+
+    Aggregates all NLP-related configurations.
+
+    Attributes:
+        enabled: Whether NLP enrichment is active
+        ollama: Ollama server configuration
+        embedding: Embedding service configuration
+        council: Model council configuration
+        enrichment_batch_size: Number of markets to enrich in one batch
+        poll_interval_seconds: Seconds between polling for new markets
+    """
+    enabled: bool = True
+    ollama: OllamaConfig = field(default_factory=OllamaConfig)
+    embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+    council: ModelCouncilConfig = field(default_factory=ModelCouncilConfig)
+    enrichment_batch_size: int = 10
+    poll_interval_seconds: float = 30.0
+
+
 @dataclass
 class Config:
     """Main configuration class."""
@@ -102,6 +216,7 @@ class Config:
     workers: WorkersConfig = field(default_factory=WorkersConfig)
     cursors: CursorsConfig = field(default_factory=CursorsConfig)
     retry: RetryConfig = field(default_factory=RetryConfig)
+    nlp_enrichment: NLPEnrichmentConfig = field(default_factory=NLPEnrichmentConfig)
     
     @property
     def batch_sizes(self) -> BatchSizesConfig:
@@ -116,6 +231,22 @@ class Config:
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
         """Create Config from dictionary."""
+        # Parse NLP enrichment config with nested structures
+        nlp_data = data.get("nlp_enrichment", {})
+        nlp_config = NLPEnrichmentConfig(
+            enabled=nlp_data.get("enabled", True),
+            ollama=OllamaConfig(**nlp_data.get("ollama", {})),
+            embedding=EmbeddingConfig(
+                batch_size=nlp_data.get("embedding", {}).get("batch_size", 32),
+                normalize=nlp_data.get("embedding", {}).get("normalize", True),
+                cache=EmbeddingCacheConfig(**nlp_data.get("embedding", {}).get("cache", {})),
+                dimension=nlp_data.get("embedding", {}).get("dimension", 768),
+            ),
+            council=ModelCouncilConfig(**nlp_data.get("council", {})),
+            enrichment_batch_size=nlp_data.get("enrichment_batch_size", 10),
+            poll_interval_seconds=nlp_data.get("poll_interval_seconds", 30.0),
+        )
+
         return cls(
             rate_limits=RateLimitsConfig(**data.get("rate_limits", {})),
             queues=QueuesConfig(**data.get("queues", {})),
@@ -123,7 +254,8 @@ class Config:
             api=ApiConfig(**data.get("api", {})),
             workers=WorkersConfig(**data.get("workers", {})),
             cursors=CursorsConfig(**data.get("cursors", {})),
-            retry=RetryConfig(**data.get("retry", {}))
+            retry=RetryConfig(**data.get("retry", {})),
+            nlp_enrichment=nlp_config,
         )
     
     def to_dict(self) -> dict:
@@ -168,6 +300,39 @@ class Config:
                 "base_delay": self.retry.base_delay,
                 "max_delay": self.retry.max_delay,
                 "exponential_base": self.retry.exponential_base
+            },
+            "nlp_enrichment": {
+                "enabled": self.nlp_enrichment.enabled,
+                "ollama": {
+                    "base_url": self.nlp_enrichment.ollama.base_url,
+                    "timeout": self.nlp_enrichment.ollama.timeout,
+                    "connect_timeout": self.nlp_enrichment.ollama.connect_timeout,
+                    "embedding_model": self.nlp_enrichment.ollama.embedding_model,
+                    "generation_model": self.nlp_enrichment.ollama.generation_model,
+                    "retry_max_attempts": self.nlp_enrichment.ollama.retry_max_attempts,
+                    "retry_base_delay": self.nlp_enrichment.ollama.retry_base_delay,
+                    "retry_max_delay": self.nlp_enrichment.ollama.retry_max_delay,
+                },
+                "embedding": {
+                    "batch_size": self.nlp_enrichment.embedding.batch_size,
+                    "normalize": self.nlp_enrichment.embedding.normalize,
+                    "dimension": self.nlp_enrichment.embedding.dimension,
+                    "cache": {
+                        "enabled": self.nlp_enrichment.embedding.cache.enabled,
+                        "max_memory_items": self.nlp_enrichment.embedding.cache.max_memory_items,
+                        "persist_to_db": self.nlp_enrichment.embedding.cache.persist_to_db,
+                        "batch_persist_threshold": self.nlp_enrichment.embedding.cache.batch_persist_threshold,
+                    },
+                },
+                "council": {
+                    "models": self.nlp_enrichment.council.models,
+                    "require_unanimous": self.nlp_enrichment.council.require_unanimous,
+                    "min_votes_for_majority": self.nlp_enrichment.council.min_votes_for_majority,
+                    "timeout_per_model": self.nlp_enrichment.council.timeout_per_model,
+                    "parallel_execution": self.nlp_enrichment.council.parallel_execution,
+                },
+                "enrichment_batch_size": self.nlp_enrichment.enrichment_batch_size,
+                "poll_interval_seconds": self.nlp_enrichment.poll_interval_seconds,
             }
         }
 

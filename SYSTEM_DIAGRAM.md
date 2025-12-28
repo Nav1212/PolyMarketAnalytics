@@ -46,10 +46,10 @@
 |  +-----------------------------------------------------------------------------+  |
 |  |                         WorkerManager                                        |  |
 |  |  +------------+  +------------+  +------------+  +---------------+           |  |
-|  |  | Trade      |  | Market     |  | Price      |  | Leaderboard   |           |  |
-|  |  | Bucket     |  | Bucket     |  | Bucket     |  | Bucket        |           |  |
-|  |  | 70/10s     |  | 100/10s    |  | 100/10s    |  | 70/10s        |           |  |
-|  |  +------------+  +------------+  +------------+  +---------------+           |  |
+|  |  | Trade      |  | Market     |  | Price      |  | Leaderboard   |  | Gamma      |           |  |
+|  |  | Bucket     |  | Bucket     |  | Bucket     |  | Bucket        |  | Bucket |           |  |
+|  |  | 70/10s     |  | 100/10s    |  | 100/10s    |  | 70/10s        |  | 100/10s|           |  |
+|  |  +------------+  +------------+  +------------+  +---------------+  +-------+           |  |
 |  |  Token Bucket Algorithm - Thread-safe rate limiting per API                  |  |
 |  +-----------------------------------------------------------------------------+  |
 +-----------------------------------------------------------------------------------+
@@ -71,7 +71,9 @@
 |  - market_token_output_queue         - market_tokens: 5,000 items                  |
 |  - price_output_queue                - prices: 10,000 items                        |
 |  - leaderboard_output_queue          - leaderboard: 5,000 items                    |
-|  - gamma_market/event/category       - gamma_*: 1,000 items                        |
+|  - gamma_market_output_queue         - gamma_markets: 1,000 items                  |
+|  - gamma_event_output_queue          - gamma_events: 1,000 items                   |
+|  - gamma_category_output_queue       - gamma_categories: 1,000 items               |
 +-----------------------------------------------------------------------------------+
                                        |
                                        v
