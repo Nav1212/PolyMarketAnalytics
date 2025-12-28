@@ -50,5 +50,14 @@
         "base_delay": 1.0,
         "max_delay": 30.0,
         "exponential_base": 2.0
+    },
+    "price_resolution": {
+        "low_volume_threshold": 10000,
+        "high_volume_threshold": 100000,
+        "delta_percent_trigger": 5.0,
+        "hourly_fidelity": 60,
+        "minute_fidelity": 1,
+        "hourly_chunk_seconds": 86400,
+        "minute_chunk_seconds": 3600
     }
 }

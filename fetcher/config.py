@@ -92,6 +92,35 @@ class RetryConfig:
     exponential_base: float = 2.0
 
 
+@dataclass
+class PriceResolutionConfig:
+    """
+    Configuration for volume-based adaptive price resolution.
+    
+    Markets are categorized by volume into three tiers:
+    - Low volume (< low_volume_threshold): Hourly resolution
+    - High volume (> high_volume_threshold): Minute resolution  
+    - Mid volume (between thresholds): Starts hourly, switches to minute
+      if price delta exceeds delta_percent_trigger across responses
+    
+    Attributes:
+        low_volume_threshold: Volume below this uses hourly (default $10K)
+        high_volume_threshold: Volume above this uses minute (default $100K)
+        delta_percent_trigger: Price change % that triggers minute resolution for mid-tier
+        hourly_fidelity: Fidelity value for hourly resolution (60 minutes)
+        minute_fidelity: Fidelity value for minute resolution (1 minute)
+        hourly_chunk_seconds: Chunk size for hourly fetches (1 day)
+        minute_chunk_seconds: Chunk size for minute fetches (1 hour)
+    """
+    low_volume_threshold: float = 10000.0
+    high_volume_threshold: float = 100000.0
+    delta_percent_trigger: float = 5.0
+    hourly_fidelity: int = 60
+    minute_fidelity: int = 1
+    hourly_chunk_seconds: int = 86400  # 1 day
+    minute_chunk_seconds: int = 3600   # 1 hour
+
+
 # =============================================================================
 # NLP Enrichment Configuration
 # =============================================================================
@@ -216,6 +245,7 @@ class Config:
     workers: WorkersConfig = field(default_factory=WorkersConfig)
     cursors: CursorsConfig = field(default_factory=CursorsConfig)
     retry: RetryConfig = field(default_factory=RetryConfig)
+    price_resolution: PriceResolutionConfig = field(default_factory=PriceResolutionConfig)
     nlp_enrichment: NLPEnrichmentConfig = field(default_factory=NLPEnrichmentConfig)
     
     @property
@@ -255,6 +285,7 @@ class Config:
             workers=WorkersConfig(**data.get("workers", {})),
             cursors=CursorsConfig(**data.get("cursors", {})),
             retry=RetryConfig(**data.get("retry", {})),
+            price_resolution=PriceResolutionConfig(**data.get("price_resolution", {})),
             nlp_enrichment=nlp_config,
         )
     
@@ -300,6 +331,15 @@ class Config:
                 "base_delay": self.retry.base_delay,
                 "max_delay": self.retry.max_delay,
                 "exponential_base": self.retry.exponential_base
+            },
+            "price_resolution": {
+                "low_volume_threshold": self.price_resolution.low_volume_threshold,
+                "high_volume_threshold": self.price_resolution.high_volume_threshold,
+                "delta_percent_trigger": self.price_resolution.delta_percent_trigger,
+                "hourly_fidelity": self.price_resolution.hourly_fidelity,
+                "minute_fidelity": self.price_resolution.minute_fidelity,
+                "hourly_chunk_seconds": self.price_resolution.hourly_chunk_seconds,
+                "minute_chunk_seconds": self.price_resolution.minute_chunk_seconds,
             },
             "nlp_enrichment": {
                 "enabled": self.nlp_enrichment.enabled,
