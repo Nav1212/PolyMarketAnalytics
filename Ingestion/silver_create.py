@@ -108,176 +108,89 @@ CREATE INDEX IF NOT EXISTS idx_trade_taker ON TradeFact(taker_id);
 
 
 # =============================================================================
-# NLP ENRICHMENT TABLES
+# USER-DEFINED TAGS TABLES
 # =============================================================================
 
-CREATE_TAG_NODE = """
-CREATE TABLE IF NOT EXISTS TagNode (
-    tag_id          INTEGER PRIMARY KEY,
-    name            VARCHAR NOT NULL UNIQUE,
-    display_name    VARCHAR,
-    description     VARCHAR,
-    tag_type        VARCHAR DEFAULT 'topic',
-    is_system       BOOLEAN DEFAULT FALSE,
-    usage_count     INTEGER DEFAULT 0,
+CREATE_TAGS = """
+CREATE TABLE IF NOT EXISTS Tags (
+    tag_id                  INTEGER PRIMARY KEY,
+    name                    VARCHAR NOT NULL UNIQUE,
+    description             TEXT,
+    is_active               BOOLEAN DEFAULT TRUE,
+    all_checked             BOOLEAN DEFAULT FALSE,
+    last_checked_market_id  INTEGER,
+    created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (last_checked_market_id) REFERENCES MarketDim(market_id)
+)
+"""
+
+CREATE_MARKET_TAG_DIM = """
+CREATE TABLE IF NOT EXISTS MarketTagDim (
+    market_tag_id   INTEGER PRIMARY KEY,
+    market_id       INTEGER NOT NULL,
+    tag_id          INTEGER NOT NULL,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    FOREIGN KEY (market_id) REFERENCES MarketDim(market_id),
+    FOREIGN KEY (tag_id) REFERENCES Tags(tag_id),
+    UNIQUE (market_id, tag_id)
 )
 """
 
-CREATE_TAG_EDGE = """
-CREATE TABLE IF NOT EXISTS TagEdge (
-    edge_id         INTEGER PRIMARY KEY,
-    parent_tag_id   INTEGER NOT NULL REFERENCES TagNode(tag_id),
-    child_tag_id    INTEGER NOT NULL REFERENCES TagNode(tag_id),
-    relationship    VARCHAR DEFAULT 'parent_of',
-    weight          REAL DEFAULT 1.0,
+CREATE_TAG_EXAMPLES = """
+CREATE TABLE IF NOT EXISTS TagExamples (
+    example_id      INTEGER PRIMARY KEY,
+    tag_id          INTEGER NOT NULL,
+    market_id       INTEGER NOT NULL,
+    is_positive     BOOLEAN NOT NULL,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(parent_tag_id, child_tag_id, relationship)
+    FOREIGN KEY (tag_id) REFERENCES Tags(tag_id),
+    FOREIGN KEY (market_id) REFERENCES MarketDim(market_id),
+    UNIQUE (tag_id, market_id)
 )
 """
 
-CREATE_TAG_EMBEDDING = """
-CREATE TABLE IF NOT EXISTS TagEmbedding (
-    tag_id          INTEGER PRIMARY KEY REFERENCES TagNode(tag_id),
-    embedding       DOUBLE[] NOT NULL,
-    model           VARCHAR NOT NULL,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
-"""
-
-CREATE_MARKET_TAG_ASSIGNMENT = """
-CREATE TABLE IF NOT EXISTS MarketTagAssignment (
-    assignment_id   INTEGER PRIMARY KEY,
-    market_id       INTEGER NOT NULL REFERENCES MarketDim(market_id),
-    tag_id          INTEGER NOT NULL REFERENCES TagNode(tag_id),
-    confidence      REAL DEFAULT 1.0,
-    source          VARCHAR DEFAULT 'manual',
-    assigned_by     VARCHAR,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(market_id, tag_id)
-)
-"""
-
-CREATE_MODEL_COUNCIL_SESSION = """
-CREATE TABLE IF NOT EXISTS ModelCouncilSession (
-    session_id      INTEGER PRIMARY KEY,
-    market_id       INTEGER REFERENCES MarketDim(market_id),
-    task_type       VARCHAR NOT NULL,
-    status          VARCHAR DEFAULT 'pending',
-    consensus_type  VARCHAR,
-    final_result    VARCHAR,
-    started_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    completed_at    TIMESTAMP
-)
-"""
-
-CREATE_MODEL_VOTE = """
-CREATE TABLE IF NOT EXISTS ModelVote (
-    vote_id         INTEGER PRIMARY KEY,
-    session_id      INTEGER NOT NULL REFERENCES ModelCouncilSession(session_id),
-    model_name      VARCHAR NOT NULL,
-    vote_value      VARCHAR NOT NULL,
-    confidence      REAL,
-    raw_response    VARCHAR,
-    latency_ms      INTEGER,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
-"""
-
-CREATE_ENRICHMENT_QUEUE = """
-CREATE TABLE IF NOT EXISTS EnrichmentQueue (
-    queue_id        INTEGER PRIMARY KEY,
-    market_id       INTEGER NOT NULL REFERENCES MarketDim(market_id),
-    priority        INTEGER DEFAULT 0,
-    status          VARCHAR DEFAULT 'pending',
-    attempts        INTEGER DEFAULT 0,
-    max_attempts    INTEGER DEFAULT 3,
-    last_error      VARCHAR,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    scheduled_at    TIMESTAMP,
-    started_at      TIMESTAMP,
-    completed_at    TIMESTAMP,
-    UNIQUE(market_id)
-)
-"""
-
-CREATE_REVIEW_QUEUE_ITEM = """
-CREATE TABLE IF NOT EXISTS ReviewQueueItem (
-    review_id       INTEGER PRIMARY KEY,
-    market_id       INTEGER REFERENCES MarketDim(market_id),
-    session_id      INTEGER REFERENCES ModelCouncilSession(session_id),
-    review_type     VARCHAR NOT NULL,
-    status          VARCHAR DEFAULT 'pending',
-    priority        INTEGER DEFAULT 0,
-    proposed_tags   VARCHAR,
-    proposed_category VARCHAR,
-    reviewer_notes  VARCHAR,
-    decision        VARCHAR,
+CREATE_JUDGE_HISTORY = """
+CREATE TABLE IF NOT EXISTS JudgeHistory (
+    history_id      INTEGER PRIMARY KEY,
+    tag_id          INTEGER NOT NULL,
+    market_id       INTEGER NOT NULL,
+    judge_votes     TEXT NOT NULL,
+    consensus       BOOLEAN,
+    human_decision  BOOLEAN,
     decided_by      VARCHAR,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    reviewed_at     TIMESTAMP
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tag_id) REFERENCES Tags(tag_id),
+    FOREIGN KEY (market_id) REFERENCES MarketDim(market_id)
 )
 """
 
-CREATE_FINE_TUNING_PAIR = """
-CREATE TABLE IF NOT EXISTS FineTuningPair (
-    pair_id         INTEGER PRIMARY KEY,
-    input_text      VARCHAR NOT NULL,
-    output_text     VARCHAR NOT NULL,
-    task_type       VARCHAR NOT NULL,
-    source          VARCHAR DEFAULT 'unanimous',
-    quality_score   REAL,
-    is_validated    BOOLEAN DEFAULT FALSE,
-    is_problematic  BOOLEAN DEFAULT FALSE,
-    notes           VARCHAR,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    validated_at    TIMESTAMP
-)
+# Tag-related indexes
+CREATE_TAG_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_tags_active ON Tags(is_active);
+CREATE INDEX IF NOT EXISTS idx_tags_cursor ON Tags(last_checked_market_id);
+CREATE INDEX IF NOT EXISTS idx_market_tag_market ON MarketTagDim(market_id);
+CREATE INDEX IF NOT EXISTS idx_market_tag_tag ON MarketTagDim(tag_id);
+CREATE INDEX IF NOT EXISTS idx_tag_examples_tag ON TagExamples(tag_id);
+CREATE INDEX IF NOT EXISTS idx_tag_examples_market ON TagExamples(market_id);
+CREATE INDEX IF NOT EXISTS idx_judge_history_tag ON JudgeHistory(tag_id);
+CREATE INDEX IF NOT EXISTS idx_judge_history_market ON JudgeHistory(market_id);
+CREATE INDEX IF NOT EXISTS idx_judge_history_consensus ON JudgeHistory(consensus);
 """
-
-# NLP-related indexes
-CREATE_NLP_INDEXES = """
-CREATE INDEX IF NOT EXISTS idx_tag_edge_parent ON TagEdge(parent_tag_id);
-CREATE INDEX IF NOT EXISTS idx_tag_edge_child ON TagEdge(child_tag_id);
-CREATE INDEX IF NOT EXISTS idx_market_tag_market ON MarketTagAssignment(market_id);
-CREATE INDEX IF NOT EXISTS idx_market_tag_tag ON MarketTagAssignment(tag_id);
-CREATE INDEX IF NOT EXISTS idx_council_session_market ON ModelCouncilSession(market_id);
-CREATE INDEX IF NOT EXISTS idx_council_session_status ON ModelCouncilSession(status);
-CREATE INDEX IF NOT EXISTS idx_model_vote_session ON ModelVote(session_id);
-CREATE INDEX IF NOT EXISTS idx_enrichment_queue_status ON EnrichmentQueue(status);
-CREATE INDEX IF NOT EXISTS idx_enrichment_queue_priority ON EnrichmentQueue(priority DESC);
-CREATE INDEX IF NOT EXISTS idx_review_queue_status ON ReviewQueueItem(status);
-CREATE INDEX IF NOT EXISTS idx_finetuning_task ON FineTuningPair(task_type);
-CREATE INDEX IF NOT EXISTS idx_finetuning_validated ON FineTuningPair(is_validated);
-"""
-
-# NLP tables in dependency order
-NLP_TABLES = [
-    ("TagNode", CREATE_TAG_NODE),
-    ("TagEdge", CREATE_TAG_EDGE),
-    ("TagEmbedding", CREATE_TAG_EMBEDDING),
-    ("MarketTagAssignment", CREATE_MARKET_TAG_ASSIGNMENT),
-    ("ModelCouncilSession", CREATE_MODEL_COUNCIL_SESSION),
-    ("ModelVote", CREATE_MODEL_VOTE),
-    ("EnrichmentQueue", CREATE_ENRICHMENT_QUEUE),
-    ("ReviewQueueItem", CREATE_REVIEW_QUEUE_ITEM),
-    ("FineTuningPair", CREATE_FINE_TUNING_PAIR),
-]
 
 # All table creation statements in dependency order
-# Core tables first, then NLP tables
 ALL_TABLES = [
     ("MarketDim", CREATE_MARKET_DIM),
     ("MarketTokenDim", CREATE_MARKET_TOKEN_DIM),
     ("TraderDim", CREATE_TRADER_DIM),
     ("PriceHistoryFact", CREATE_PRICE_HISTORY_FACT),
     ("TradeFact", CREATE_TRADE_FACT),
+    ("Tags", CREATE_TAGS),
+    ("MarketTagDim", CREATE_MARKET_TAG_DIM),
+    ("TagExamples", CREATE_TAG_EXAMPLES),
+    ("JudgeHistory", CREATE_JUDGE_HISTORY),
 ]
-
-# Combined list including NLP tables
-ALL_TABLES_WITH_NLP = ALL_TABLES + NLP_TABLES
 
 
 # =============================================================================
@@ -287,7 +200,6 @@ ALL_TABLES_WITH_NLP = ALL_TABLES + NLP_TABLES
 def create_silver_schema(
     conn: Optional[duckdb.DuckDBPyConnection] = None,
     db_path: Optional[Path] = None,
-    include_nlp: bool = False,
 ) -> duckdb.DuckDBPyConnection:
     """
     Create all Silver Layer tables if they don't exist.
@@ -295,7 +207,6 @@ def create_silver_schema(
     Args:
         conn: Existing DuckDB connection (optional)
         db_path: Path to DuckDB file (uses default if not provided)
-        include_nlp: Whether to include NLP enrichment tables
 
     Returns:
         DuckDB connection with schema initialized
@@ -307,7 +218,7 @@ def create_silver_schema(
 
     print("Creating Silver Layer schema...")
 
-    # Create core tables
+    # Create all tables
     for table_name, ddl in ALL_TABLES:
         try:
             conn.execute(ddl)
@@ -322,52 +233,13 @@ def create_silver_schema(
             conn.execute(stmt)
     print("  ✓ Core indexes created")
 
-    # Create NLP tables if requested
-    if include_nlp:
-        print("Creating NLP enrichment tables...")
-        for table_name, ddl in NLP_TABLES:
-            try:
-                conn.execute(ddl)
-                print(f"  ✓ {table_name}")
-            except Exception as e:
-                print(f"  ✗ {table_name}: {e}")
-                raise
-
-        # Create NLP indexes
-        for stmt in CREATE_NLP_INDEXES.strip().split(';'):
-            if stmt.strip():
-                conn.execute(stmt)
-        print("  ✓ NLP indexes created")
-
-    return conn
-
-
-def create_nlp_schema(
-    conn: duckdb.DuckDBPyConnection,
-) -> None:
-    """
-    Create only the NLP enrichment tables.
-
-    Use this when you want to add NLP tables to an existing schema.
-
-    Args:
-        conn: Existing DuckDB connection with core tables already created
-    """
-    print("Creating NLP enrichment tables...")
-
-    for table_name, ddl in NLP_TABLES:
-        try:
-            conn.execute(ddl)
-            print(f"  ✓ {table_name}")
-        except Exception as e:
-            print(f"  ✗ {table_name}: {e}")
-            raise
-
-    # Create NLP indexes
-    for stmt in CREATE_NLP_INDEXES.strip().split(';'):
+    # Create tag indexes
+    for stmt in CREATE_TAG_INDEXES.strip().split(';'):
         if stmt.strip():
             conn.execute(stmt)
-    print("  ✓ NLP indexes created")
+    print("  ✓ Tag indexes created")
+
+    return conn
 
 
 def drop_silver_schema(
@@ -376,7 +248,7 @@ def drop_silver_schema(
 ) -> None:
     """
     Drop all Silver Layer tables (use with caution).
-    
+
     Args:
         conn: DuckDB connection
         confirm: Must be True to actually drop tables
@@ -384,10 +256,13 @@ def drop_silver_schema(
     if not confirm:
         print("Set confirm=True to drop tables")
         return
-    
-    # Drop in reverse dependency order
-    tables = ["TradeFact", "PriceHistoryFact", "MarketTokenDim", "TraderDim", "MarketDim"]
-    
+
+    # Drop in reverse dependency order (dependent tables first)
+    tables = [
+        "JudgeHistory", "TagExamples", "MarketTagDim", "Tags",
+        "TradeFact", "PriceHistoryFact", "MarketTokenDim", "TraderDim", "MarketDim"
+    ]
+
     for table in tables:
         try:
             conn.execute(f"DROP TABLE IF EXISTS {table}")

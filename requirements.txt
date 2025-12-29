@@ -6,6 +6,10 @@ httpx>=0.25.0
 pyarrow>=14.0.0
 py-clob-client>=0.1.0
 
+# Tag Manager UI dependencies
+streamlit>=1.30.0
+requests>=2.31.0
+
 # Testing dependencies
 pytest>=7.4.0
 pytest-cov>=4.1.0
