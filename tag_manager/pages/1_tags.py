@@ -4,7 +4,7 @@ Tags Page - View and manage tags.
 
 import streamlit as st
 from tag_manager.db import get_connection
-from tag_manager.services import TagService
+from tag_manager.services import TagService, MarketService
 
 st.set_page_config(page_title="Tags", page_icon="📋", layout="wide")
 

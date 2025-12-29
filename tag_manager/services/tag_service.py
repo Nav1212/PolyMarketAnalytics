@@ -190,8 +190,9 @@ class TagService:
         return self.get_tag(tag_id)
 
     def delete_tag(self, tag_id: int) -> bool:
-        """Delete a tag and all its examples."""
-        # Delete examples first
+        """Delete a tag and all its related records."""
+        # Delete all FK references first to avoid constraint violations
+        self.conn.execute("DELETE FROM JudgeHistory WHERE tag_id = ?", [tag_id])
         self.conn.execute("DELETE FROM TagExamples WHERE tag_id = ?", [tag_id])
         self.conn.execute("DELETE FROM MarketTagDim WHERE tag_id = ?", [tag_id])
         result = self.conn.execute("DELETE FROM Tags WHERE tag_id = ?", [tag_id])

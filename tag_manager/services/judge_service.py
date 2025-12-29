@@ -3,8 +3,10 @@ Judge service for managing LLM-based market classification.
 """
 
 import json
+import threading
+import time
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Callable
 from dataclasses import dataclass
 import duckdb
 
@@ -278,8 +280,16 @@ class JudgeService:
         self,
         tag_id: Optional[int] = None,
         limit: int = 10,
+        majority_yes_only: bool = True,
     ) -> list[JudgeHistoryEntry]:
-        """Get entries that need human review (no consensus, no human decision)."""
+        """
+        Get entries that need human review (no consensus, no human decision).
+
+        Args:
+            tag_id: Filter by tag ID
+            limit: Maximum entries to return
+            majority_yes_only: If True, only return markets where majority voted YES
+        """
         sql = """
             SELECT h.history_id, h.tag_id, h.market_id, h.judge_votes, h.consensus,
                    h.human_decision, h.decided_by, h.created_at, h.updated_at,
@@ -299,7 +309,19 @@ class JudgeService:
         params.append(limit)
 
         rows = self.conn.execute(sql, params).fetchall()
-        return [self._row_to_entry(r) for r in rows]
+        entries = [self._row_to_entry(r) for r in rows]
+
+        # Filter to only include entries where majority voted YES
+        if majority_yes_only:
+            filtered = []
+            for entry in entries:
+                yes_count = sum(1 for v in entry.judge_votes.values() if v is True)
+                no_count = sum(1 for v in entry.judge_votes.values() if v is False)
+                if yes_count > no_count:
+                    filtered.append(entry)
+            return filtered
+
+        return entries
 
     def _row_to_entry(self, row) -> JudgeHistoryEntry:
         """Convert a database row to a JudgeHistoryEntry."""
@@ -323,3 +345,171 @@ class JudgeService:
     def close(self):
         """Close the judge pool."""
         self.judge_pool.close()
+
+    def classify_all_new_markets_for_tag(
+        self,
+        tag_id: int,
+        batch_size: int = 50,
+        on_progress: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """
+        Classify all new/unprocessed markets for a tag.
+
+        Args:
+            tag_id: The tag to classify for
+            batch_size: Number of markets to process per batch
+            on_progress: Optional callback(processed, total) for progress updates
+
+        Returns:
+            Total number of markets classified
+        """
+        tag = self.tag_service.get_tag(tag_id)
+        if not tag:
+            return 0
+
+        if tag.example_count < 2:
+            return 0
+
+        total_classified = 0
+
+        while True:
+            markets = self.market_service.get_markets_for_tagging(
+                tag_id=tag_id,
+                limit=batch_size,
+                after_market_id=tag.last_checked_market_id
+            )
+
+            if not markets:
+                self.tag_service.mark_all_checked(tag_id, True)
+                break
+
+            for market in markets:
+                try:
+                    self.classify_market(tag_id, market.market_id)
+                    total_classified += 1
+
+                    if on_progress:
+                        on_progress(total_classified, -1)
+
+                except Exception:
+                    pass
+
+            tag = self.tag_service.get_tag(tag_id)
+
+        return total_classified
+
+
+class BackgroundClassifier:
+    """
+    Background classifier that automatically processes new markets for all active tags.
+
+    Usage:
+        classifier = BackgroundClassifier(db_path)
+        classifier.start()
+        # ... app runs ...
+        classifier.stop()
+    """
+
+    def __init__(
+        self,
+        db_path: str,
+        poll_interval: int = 60,
+        batch_size: int = 10,
+    ):
+        """
+        Initialize the background classifier.
+
+        Args:
+            db_path: Path to the DuckDB database
+            poll_interval: Seconds between classification runs
+            batch_size: Number of markets to classify per tag per run
+        """
+        self.db_path = db_path
+        self.poll_interval = poll_interval
+        self.batch_size = batch_size
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._is_running = False
+        self._last_run: Optional[datetime] = None
+        self._markets_classified = 0
+
+    @property
+    def is_running(self) -> bool:
+        return self._is_running
+
+    @property
+    def last_run(self) -> Optional[datetime]:
+        return self._last_run
+
+    @property
+    def markets_classified(self) -> int:
+        return self._markets_classified
+
+    def start(self):
+        """Start the background classification thread."""
+        if self._thread and self._thread.is_alive():
+            return
+
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
+        self._is_running = True
+
+    def stop(self):
+        """Stop the background classification thread."""
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+        self._is_running = False
+
+    def _run_loop(self):
+        """Main classification loop."""
+        while not self._stop_event.is_set():
+            try:
+                self._classify_round()
+                self._last_run = datetime.now()
+            except Exception:
+                pass
+
+            self._stop_event.wait(self.poll_interval)
+
+        self._is_running = False
+
+    def _classify_round(self):
+        """Run one round of classification for all active tags."""
+        conn = duckdb.connect(self.db_path)
+        try:
+            judge_service = JudgeService(conn)
+            tag_service = TagService(conn)
+
+            tags = tag_service.list_tags(active_only=True)
+
+            for tag in tags:
+                if self._stop_event.is_set():
+                    break
+
+                if tag.example_count < 2:
+                    continue
+
+                if tag.all_checked:
+                    continue
+
+                markets = judge_service.market_service.get_markets_for_tagging(
+                    tag_id=tag.tag_id,
+                    limit=self.batch_size,
+                    after_market_id=tag.last_checked_market_id
+                )
+
+                for market in markets:
+                    if self._stop_event.is_set():
+                        break
+
+                    try:
+                        judge_service.classify_market(tag.tag_id, market.market_id)
+                        self._markets_classified += 1
+                    except Exception:
+                        pass
+
+            judge_service.close()
+        finally:
+            conn.close()

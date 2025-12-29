@@ -8,7 +8,6 @@ Defines the interface and common functionality for data transformation.
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from datetime import datetime
 import duckdb
 
 from fetcher.utils.logging_config import get_logger

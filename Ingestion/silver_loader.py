@@ -18,7 +18,7 @@ Usage:
 
 import threading
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Type
+from typing import Any, List, Optional, Type
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime

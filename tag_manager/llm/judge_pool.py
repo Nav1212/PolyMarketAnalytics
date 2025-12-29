@@ -5,11 +5,14 @@ Runs the same classification prompt across multiple models and aggregates votes.
 """
 
 import json
+import logging
 from typing import Optional
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from tag_manager.llm.ollama_client import OllamaClient, OllamaConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -75,10 +78,52 @@ class JudgePool:
         require_unanimous: bool = False,
         min_votes_for_majority: int = 2,
     ):
-        self.models = models or ["llama3.2", "mistral", "phi3"]
         self.client = OllamaClient(ollama_config)
+
+        # Use provided models, or auto-detect available models
+        if models:
+            self.models = models
+        else:
+            self.models = self._get_default_models()
+
         self.require_unanimous = require_unanimous
         self.min_votes_for_majority = min_votes_for_majority
+
+        logger.info(f"JudgePool initialized with models: {self.models}")
+
+    def _get_default_models(self) -> list[str]:
+        """Get default models - from session state or auto-detect."""
+        # Try to get from Streamlit session state
+        try:
+            import streamlit as st
+            selected = st.session_state.get("selected_models", [])
+            if selected:
+                return selected
+        except Exception:
+            pass
+
+        # Fall back to auto-detection
+        available = self.client.list_models()
+        if available:
+            return available[:3]
+
+        # Final fallback
+        return ["llama3.2", "mistral", "phi3"]
+
+    def update_settings(
+        self,
+        models: Optional[list[str]] = None,
+        require_unanimous: Optional[bool] = None,
+        min_votes_for_majority: Optional[int] = None,
+    ):
+        """Update pool settings dynamically."""
+        if models is not None:
+            self.models = models
+            logger.info(f"Updated models to: {self.models}")
+        if require_unanimous is not None:
+            self.require_unanimous = require_unanimous
+        if min_votes_for_majority is not None:
+            self.min_votes_for_majority = min_votes_for_majority
 
     def classify(
         self,
@@ -138,6 +183,7 @@ class JudgePool:
     def _classify_single(self, model: str, prompt: str) -> JudgeResult:
         """Run classification on a single model."""
         try:
+            logger.debug(f"Classifying with model: {model}")
             response = self.client.generate(
                 model=model,
                 prompt=prompt,
@@ -146,6 +192,7 @@ class JudgePool:
             )
 
             vote = self._parse_response(response)
+            logger.debug(f"Model {model} response: '{response}' -> vote: {vote}")
 
             return JudgeResult(
                 model=model,
@@ -153,6 +200,7 @@ class JudgePool:
                 raw_response=response,
             )
         except Exception as e:
+            logger.error(f"Error with model {model}: {e}")
             return JudgeResult(
                 model=model,
                 vote=None,

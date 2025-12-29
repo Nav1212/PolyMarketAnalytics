@@ -21,7 +21,7 @@ from pathlib import Path
 import duckdb
 
 from tag_manager.db import get_connection, DEFAULT_DB_PATH
-from tag_manager.services import TagService, MarketService
+from tag_manager.services import TagService, MarketService, BackgroundClassifier
 from tag_manager.llm import OllamaClient
 
 
@@ -32,9 +32,23 @@ def init_session_state():
 
     if "ollama_available" not in st.session_state:
         client = OllamaClient()
-        st.session_state.ollama_available = client.is_available()
+        # Auto-start Ollama if not running
+        st.session_state.ollama_available = client.ensure_running(max_wait=30.0)
         st.session_state.available_models = client.list_models() if st.session_state.ollama_available else []
         client.close()
+
+    # Start background classifier if Ollama is available
+    if "background_classifier" not in st.session_state:
+        if st.session_state.ollama_available:
+            classifier = BackgroundClassifier(
+                db_path=str(DEFAULT_DB_PATH),
+                poll_interval=30,
+                batch_size=5,
+            )
+            classifier.start()
+            st.session_state.background_classifier = classifier
+        else:
+            st.session_state.background_classifier = None
 
 
 def main():
@@ -67,6 +81,16 @@ def main():
             st.warning("⚠️ Ollama not available")
             st.caption("Run `ollama serve` to enable LLM features")
 
+        # Background classifier status
+        classifier = st.session_state.get("background_classifier")
+        if classifier and classifier.is_running:
+            st.success("✅ Auto-classifier running")
+            st.caption(f"Classified: {classifier.markets_classified}")
+            if classifier.last_run:
+                st.caption(f"Last run: {classifier.last_run.strftime('%H:%M:%S')}")
+        elif st.session_state.ollama_available:
+            st.warning("⚠️ Auto-classifier stopped")
+
         st.divider()
 
         # Quick stats
@@ -83,12 +107,13 @@ def main():
     - **📝 Examples**: Add example markets for training
     - **⚖️ Judge**: Review markets that need human decision
     - **📜 History**: View and edit recent classifications
+    - **⚙️ Settings**: Configure LLM models and classification settings
     """)
 
     # Quick actions
     st.subheader("Quick Actions")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         if st.button("➕ Create New Tag", use_container_width=True):
@@ -102,6 +127,10 @@ def main():
     with col3:
         if st.button("📊 View History", use_container_width=True):
             st.switch_page("pages/4_history.py")
+
+    with col4:
+        if st.button("⚙️ Settings", use_container_width=True):
+            st.switch_page("pages/5_settings.py")
 
     # Tags overview
     if tags:
