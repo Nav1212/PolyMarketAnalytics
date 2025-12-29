@@ -254,8 +254,20 @@ class JudgeService:
         self,
         tag_id: Optional[int] = None,
         limit: int = 10,
+        search_query: Optional[str] = None,
+        decision_filter: Optional[str] = None,
+        source_filter: Optional[str] = None,
     ) -> list[JudgeHistoryEntry]:
-        """Get recent judge history entries."""
+        """
+        Get recent judge history entries with optional filtering.
+
+        Args:
+            tag_id: Filter by tag ID
+            limit: Maximum entries to return
+            search_query: Search market questions (case-insensitive)
+            decision_filter: "Positive", "Negative", or "Pending"
+            source_filter: "LLM Consensus" or "Human"
+        """
         sql = """
             SELECT h.history_id, h.tag_id, h.market_id, h.judge_votes, h.consensus,
                    h.human_decision, h.decided_by, h.created_at, h.updated_at,
@@ -263,12 +275,34 @@ class JudgeService:
             FROM JudgeHistory h
             JOIN MarketDim m ON h.market_id = m.market_id
             JOIN Tags t ON h.tag_id = t.tag_id
+            WHERE 1=1
         """
         params = []
 
         if tag_id is not None:
-            sql += " WHERE h.tag_id = ?"
+            sql += " AND h.tag_id = ?"
             params.append(tag_id)
+
+        if search_query:
+            sql += " AND m.question ILIKE ?"
+            params.append(f"%{search_query}%")
+
+        if decision_filter:
+            if decision_filter == "Positive":
+                # Positive = human_decision is True OR (consensus is True AND human_decision is NULL)
+                sql += " AND (h.human_decision = TRUE OR (h.consensus = TRUE AND h.human_decision IS NULL))"
+            elif decision_filter == "Negative":
+                # Negative = human_decision is False OR (consensus is False AND human_decision is NULL)
+                sql += " AND (h.human_decision = FALSE OR (h.consensus = FALSE AND h.human_decision IS NULL))"
+            elif decision_filter == "Pending":
+                # Pending = consensus is NULL AND human_decision is NULL
+                sql += " AND h.consensus IS NULL AND h.human_decision IS NULL"
+
+        if source_filter:
+            if source_filter == "LLM Consensus":
+                sql += " AND h.human_decision IS NULL AND h.consensus IS NOT NULL"
+            elif source_filter == "Human":
+                sql += " AND h.human_decision IS NOT NULL"
 
         sql += " ORDER BY h.updated_at DESC LIMIT ?"
         params.append(limit)

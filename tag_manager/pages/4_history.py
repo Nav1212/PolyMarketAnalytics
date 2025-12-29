@@ -22,8 +22,15 @@ def main():
     st.title("📜 Classification History")
     st.markdown("Review and edit past classifications to improve future results.")
 
+    # Search box
+    search_query = st.text_input(
+        "🔍 Search",
+        placeholder="Search by market question...",
+        key="history_search"
+    )
+
     # Filters
-    col1, col2 = st.columns([2, 1])
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 
     with col1:
         tags = tag_service.list_tags()
@@ -35,15 +42,38 @@ def main():
         )
 
     with col2:
-        limit = st.selectbox("Show", [10, 25, 50], index=0)
+        decision_filter = st.selectbox(
+            "Decision",
+            options=["All", "Positive", "Negative", "Pending"],
+            index=0
+        )
+
+    with col3:
+        source_filter = st.selectbox(
+            "Source",
+            options=["All", "LLM Consensus", "Human"],
+            index=0
+        )
+
+    with col4:
+        limit = st.selectbox("Show", [10, 25, 50, 100], index=0)
 
     tag_id = selected_tag.tag_id if selected_tag else None
 
     # Get history
-    history = judge_service.get_recent_history(tag_id=tag_id, limit=limit)
+    history = judge_service.get_recent_history(
+        tag_id=tag_id,
+        limit=limit,
+        search_query=search_query if search_query else None,
+        decision_filter=decision_filter if decision_filter != "All" else None,
+        source_filter=source_filter if source_filter != "All" else None,
+    )
 
     if not history:
-        st.info("No classification history yet. Start judging markets!")
+        if search_query or decision_filter != "All" or source_filter != "All":
+            st.info("No results match your filters. Try adjusting your search or filter criteria.")
+        else:
+            st.info("No classification history yet. Start judging markets!")
         return
 
     st.caption(f"Showing {len(history)} most recent classifications")
