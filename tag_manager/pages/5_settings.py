@@ -6,6 +6,7 @@ import streamlit as st
 import time
 from tag_manager.db import get_connection
 from tag_manager.llm import OllamaClient
+from tag_manager.services import SettingsService
 
 st.set_page_config(page_title="Settings", page_icon="⚙️", layout="wide")
 
@@ -25,17 +26,45 @@ def init_state():
         st.session_state.db_conn = get_connection()
     if "ollama_client" not in st.session_state:
         st.session_state.ollama_client = OllamaClient()
+    if "settings_service" not in st.session_state:
+        st.session_state.settings_service = SettingsService(st.session_state.db_conn)
     if "selected_models" not in st.session_state:
-        # Load from installed models or use defaults
-        client = st.session_state.ollama_client
-        installed = client.list_models()
-        st.session_state.selected_models = installed[:3] if installed else []
+        # Load from persistent storage first, then fall back to installed models
+        settings = st.session_state.settings_service
+        saved_models = settings.get_selected_models()
+        if saved_models:
+            st.session_state.selected_models = saved_models
+        else:
+            client = st.session_state.ollama_client
+            installed = client.list_models()
+            st.session_state.selected_models = installed[:3] if installed else []
+    # Load other settings from persistent storage
+    if "require_unanimous" not in st.session_state:
+        settings = st.session_state.settings_service
+        st.session_state.require_unanimous = settings.get_require_unanimous()
+    if "min_votes_for_majority" not in st.session_state:
+        settings = st.session_state.settings_service
+        st.session_state.min_votes_for_majority = settings.get_min_votes_for_majority()
 
 
 def refresh_models():
     """Refresh the list of installed models."""
     client = st.session_state.ollama_client
     return client.list_models()
+
+
+def save_selected_models(models: list[str]):
+    """Save selected models to both session state and persistent storage."""
+    st.session_state.selected_models = models
+    st.session_state.settings_service.set_selected_models(models)
+
+
+def save_consensus_settings(require_unanimous: bool, min_votes: int):
+    """Save consensus settings to both session state and persistent storage."""
+    st.session_state.require_unanimous = require_unanimous
+    st.session_state.min_votes_for_majority = min_votes
+    st.session_state.settings_service.set_require_unanimous(require_unanimous)
+    st.session_state.settings_service.set_min_votes_for_majority(min_votes)
 
 
 def install_model(model_name: str) -> bool:
@@ -111,12 +140,12 @@ def main():
                     if model in selected:
                         if st.button("Deselect", key=f"deselect_{model}"):
                             selected.remove(model)
-                            st.session_state.selected_models = selected
+                            save_selected_models(selected)
                             st.rerun()
                     else:
                         if st.button("Select", key=f"select_{model}"):
                             selected.append(model)
-                            st.session_state.selected_models = selected
+                            save_selected_models(selected)
                             st.rerun()
 
                 with col3:
@@ -125,7 +154,7 @@ def main():
                             if uninstall_model(model):
                                 if model in selected:
                                     selected.remove(model)
-                                    st.session_state.selected_models = selected
+                                    save_selected_models(selected)
                                 st.success(f"Removed {model}")
                                 st.rerun()
                             else:
@@ -182,7 +211,7 @@ def main():
                                     for m in new_models:
                                         if base_name in m and m not in selected:
                                             selected.append(m)
-                                            st.session_state.selected_models = selected
+                                            save_selected_models(selected)
                                             break
                                     time.sleep(1)
                                     st.rerun()
@@ -227,7 +256,7 @@ def main():
                 with col2:
                     if st.button("Remove", key=f"cls_remove_{model}"):
                         selected.remove(model)
-                        st.session_state.selected_models = selected
+                        save_selected_models(selected)
                         st.rerun()
         else:
             st.warning("No models selected for classification")
@@ -237,22 +266,31 @@ def main():
         # Consensus settings
         st.markdown("### Consensus Settings")
 
+        # Load current values from session state (already loaded from DB in init_state)
+        current_unanimous = st.session_state.get("require_unanimous", False)
+        current_min_votes = st.session_state.get("min_votes_for_majority", 2)
+
         consensus_mode = st.radio(
             "Consensus Mode",
             ["Majority Vote", "Unanimous"],
+            index=1 if current_unanimous else 0,
             help="Majority: 2+ models must agree. Unanimous: All models must agree."
         )
 
-        st.session_state.require_unanimous = (consensus_mode == "Unanimous")
+        require_unanimous = (consensus_mode == "Unanimous")
 
         min_votes = st.slider(
             "Minimum votes for majority",
             min_value=1,
             max_value=max(3, len(selected)),
-            value=2,
+            value=current_min_votes,
             help="How many models must agree for a majority decision"
         )
-        st.session_state.min_votes_for_majority = min_votes
+
+        # Save button for consensus settings
+        if st.button("💾 Save Consensus Settings"):
+            save_consensus_settings(require_unanimous, min_votes)
+            st.success("Consensus settings saved!")
 
         st.divider()
 

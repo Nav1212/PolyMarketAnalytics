@@ -75,8 +75,8 @@ class JudgePool:
         self,
         models: Optional[list[str]] = None,
         ollama_config: Optional[OllamaConfig] = None,
-        require_unanimous: bool = False,
-        min_votes_for_majority: int = 2,
+        require_unanimous: Optional[bool] = None,
+        min_votes_for_majority: Optional[int] = None,
     ):
         self.client = OllamaClient(ollama_config)
 
@@ -86,13 +86,31 @@ class JudgePool:
         else:
             self.models = self._get_default_models()
 
-        self.require_unanimous = require_unanimous
-        self.min_votes_for_majority = min_votes_for_majority
+        # Load consensus settings from persistent storage if not provided
+        if require_unanimous is None or min_votes_for_majority is None:
+            saved_unanimous, saved_min_votes = self._get_default_consensus_settings()
+            self.require_unanimous = require_unanimous if require_unanimous is not None else saved_unanimous
+            self.min_votes_for_majority = min_votes_for_majority if min_votes_for_majority is not None else saved_min_votes
+        else:
+            self.require_unanimous = require_unanimous
+            self.min_votes_for_majority = min_votes_for_majority
 
         logger.info(f"JudgePool initialized with models: {self.models}")
 
     def _get_default_models(self) -> list[str]:
-        """Get default models - from session state or auto-detect."""
+        """Get default models - from persistent storage, session state, or auto-detect."""
+        # Try to get from persistent storage first
+        try:
+            from tag_manager.db import get_connection
+            from tag_manager.services import SettingsService
+            conn = get_connection()
+            settings = SettingsService(conn)
+            saved_models = settings.get_selected_models()
+            if saved_models:
+                return saved_models
+        except Exception:
+            pass
+
         # Try to get from Streamlit session state
         try:
             import streamlit as st
@@ -109,6 +127,18 @@ class JudgePool:
 
         # Final fallback
         return ["llama3.2", "mistral", "phi3"]
+
+    def _get_default_consensus_settings(self) -> tuple[bool, int]:
+        """Get default consensus settings from persistent storage."""
+        try:
+            from tag_manager.db import get_connection
+            from tag_manager.services import SettingsService
+            conn = get_connection()
+            settings = SettingsService(conn)
+            return settings.get_require_unanimous(), settings.get_min_votes_for_majority()
+        except Exception:
+            pass
+        return False, 2  # Default values
 
     def update_settings(
         self,
