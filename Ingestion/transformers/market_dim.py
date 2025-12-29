@@ -20,6 +20,7 @@ from datetime import datetime
 import duckdb
 
 from Ingestion.transformers.base import BaseTransformer
+from fetcher.config import get_config
 
 
 class MarketDimTransformer(BaseTransformer):
@@ -114,10 +115,10 @@ class MarketDimTransformer(BaseTransformer):
             read_conn = duckdb.connect(":memory:")
             glob_pattern = str(bronze_path / "**" / "*.parquet")
 
-            # Read and deduplicate by condition_Id, keeping latest values
+            # Read and deduplicate by condition_id, keeping latest values
             query = f"""
-                SELECT DISTINCT ON (condition_Id)
-                    condition_Id,
+                SELECT DISTINCT ON (condition_id)
+                    condition_id,
                     question,
                     description,
                     end_date_iso,
@@ -126,8 +127,8 @@ class MarketDimTransformer(BaseTransformer):
                     active,
                     closed
                 FROM read_parquet('{glob_pattern}', hive_partitioning=true)
-                WHERE condition_Id IS NOT NULL
-                ORDER BY condition_Id
+                WHERE condition_id IS NOT NULL
+                ORDER BY condition_id
             """
 
             result = read_conn.execute(query).fetchdf()
@@ -136,7 +137,7 @@ class MarketDimTransformer(BaseTransformer):
             # Convert to dict keyed by condition_id
             markets = {}
             for record in result.to_dict('records'):
-                cid = record.get('condition_Id')
+                cid = record.get('condition_id')
                 if cid:
                     markets[cid] = {
                         'condition_id': cid,
@@ -278,9 +279,9 @@ class MarketDimTransformer(BaseTransformer):
 
     def _upsert_markets(self, markets: List[Dict[str, Any]]) -> None:
         """
-        Upsert markets into the MarketDim table.
+        Upsert markets into the MarketDim table using batch operations.
 
-        Uses INSERT ... ON CONFLICT for efficient upserts.
+        Uses batch INSERT and UPDATE for efficient upserts wrapped in a transaction.
 
         Args:
             markets: List of market records to upsert
@@ -289,18 +290,70 @@ class MarketDimTransformer(BaseTransformer):
             return
 
         now = datetime.now()
+        config = get_config()
+        batch_size = config.batch_sizes.market * 10  # 10x config batch size
 
-        for market in markets:
-            try:
-                # Check if market exists
-                existing = self.conn.execute(
-                    "SELECT market_id FROM MarketDim WHERE condition_id = ?",
-                    [market['condition_id']]
-                ).fetchone()
+        try:
+            # Start transaction
+            self.conn.execute("BEGIN TRANSACTION")
 
-                if existing:
-                    # Update existing market
-                    self.conn.execute("""
+            # Load all existing condition_ids in one query
+            existing_result = self.conn.execute(
+                "SELECT condition_id, market_id FROM MarketDim"
+            ).fetchall()
+            existing_map = {row[0]: row[1] for row in existing_result}
+
+            # Get current max market_id once
+            max_id_result = self.conn.execute(
+                "SELECT COALESCE(MAX(market_id), 0) FROM MarketDim"
+            ).fetchone()
+            next_id = max_id_result[0] + 1 if max_id_result else 1
+
+            # Separate markets into updates and inserts
+            updates = []
+            inserts = []
+
+            for market in markets:
+                condition_id = market['condition_id']
+                if condition_id in existing_map:
+                    updates.append((
+                        market.get('question'),
+                        market.get('description'),
+                        market.get('start_dt'),
+                        market.get('end_dt'),
+                        market.get('volume'),
+                        market.get('liquidity'),
+                        market.get('active', True),
+                        market.get('closed', False),
+                        market.get('category'),
+                        market.get('tags'),
+                        now,
+                        condition_id,
+                    ))
+                else:
+                    inserts.append((
+                        next_id,
+                        condition_id,
+                        market.get('question'),
+                        market.get('description'),
+                        market.get('start_dt'),
+                        market.get('end_dt'),
+                        market.get('volume'),
+                        market.get('liquidity'),
+                        market.get('active', True),
+                        market.get('closed', False),
+                        market.get('category'),
+                        market.get('tags'),
+                        now,
+                        now,
+                    ))
+                    next_id += 1
+
+            # Batch UPDATE using executemany
+            if updates:
+                for i in range(0, len(updates), batch_size):
+                    batch = updates[i:i + batch_size]
+                    self.conn.executemany("""
                         UPDATE MarketDim SET
                             question = COALESCE(?, question),
                             description = COALESCE(?, description),
@@ -314,60 +367,31 @@ class MarketDimTransformer(BaseTransformer):
                             tags = COALESCE(?, tags),
                             updated_at = ?
                         WHERE condition_id = ?
-                    """, [
-                        market.get('question'),
-                        market.get('description'),
-                        market.get('start_dt'),
-                        market.get('end_dt'),
-                        market.get('volume'),
-                        market.get('liquidity'),
-                        market.get('active', True),
-                        market.get('closed', False),
-                        market.get('category'),
-                        market.get('tags'),
-                        now,
-                        market['condition_id'],
-                    ])
-                    self._records_updated += 1
-                else:
-                    # Get next market_id
-                    result = self.conn.execute(
-                        "SELECT COALESCE(MAX(market_id), 0) FROM MarketDim"
-                    ).fetchone()
-                    max_id = result[0] if result else 0
-                    new_id = max_id + 1
+                    """, batch)
+                self._records_updated = len(updates)
 
-                    # Insert new market
-                    self.conn.execute("""
+            # Batch INSERT using executemany
+            if inserts:
+                for i in range(0, len(inserts), batch_size):
+                    batch = inserts[i:i + batch_size]
+                    self.conn.executemany("""
                         INSERT INTO MarketDim (
                             market_id, condition_id, question, description,
                             start_dt, end_dt, volume, liquidity,
                             active, closed, category, tags,
                             created_at, updated_at
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, [
-                        new_id,
-                        market['condition_id'],
-                        market.get('question'),
-                        market.get('description'),
-                        market.get('start_dt'),
-                        market.get('end_dt'),
-                        market.get('volume'),
-                        market.get('liquidity'),
-                        market.get('active', True),
-                        market.get('closed', False),
-                        market.get('category'),
-                        market.get('tags'),
-                        now,
-                        now,
-                    ])
-                    self._records_inserted += 1
+                    """, batch)
+                self._records_inserted = len(inserts)
 
-            except Exception as e:
-                self.logger.error(
-                    f"Error upserting market {market.get('condition_id')}: {e}"
-                )
-                self._records_skipped += 1
+            # Commit transaction
+            self.conn.execute("COMMIT")
+
+        except Exception as e:
+            self.logger.error(f"Error in batch upsert, rolling back: {e}")
+            self.conn.execute("ROLLBACK")
+            self._records_skipped = len(markets)
+            raise
 
     def _parse_datetime(self, value: Any) -> Optional[datetime]:
         """Parse a datetime value from various formats."""

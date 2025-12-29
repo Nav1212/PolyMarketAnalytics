@@ -69,7 +69,7 @@ class TagService:
         """
         if active_only:
             query += " WHERE t.is_active = TRUE"
-        query += " GROUP BY t.tag_id ORDER BY t.name"
+        query += " GROUP BY t.tag_id, t.name, t.description, t.is_active, t.all_checked, t.last_checked_market_id, t.created_at, t.updated_at ORDER BY t.name"
 
         rows = self.conn.execute(query).fetchall()
         return [
@@ -101,7 +101,7 @@ class TagService:
             FROM Tags t
             LEFT JOIN TagExamples e ON t.tag_id = e.tag_id
             WHERE t.tag_id = ?
-            GROUP BY t.tag_id
+            GROUP BY t.tag_id, t.name, t.description, t.is_active, t.all_checked, t.last_checked_market_id, t.created_at, t.updated_at
             """,
             [tag_id]
         ).fetchone()

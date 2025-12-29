@@ -16,6 +16,7 @@ from datetime import datetime
 import duckdb
 
 from Ingestion.transformers.base import BaseTransformer
+from fetcher.config import get_config
 
 
 class MarketTokenDimTransformer(BaseTransformer):
@@ -141,7 +142,7 @@ class MarketTokenDimTransformer(BaseTransformer):
             # Read all tokens, deduplicating by token_id
             query = f"""
                 SELECT DISTINCT ON (token_id)
-                    condition_Id,
+                    condition_id,
                     token_id,
                     price,
                     winner,
@@ -166,47 +167,49 @@ class MarketTokenDimTransformer(BaseTransformer):
         existing_tokens: set
     ) -> None:
         """
-        Process and insert tokens into MarketTokenDim.
+        Process and insert tokens into MarketTokenDim using batch operations.
 
         Args:
             tokens: List of token records from bronze
             existing_tokens: Set of existing token_hash values
         """
         now = datetime.now()
+        config = get_config()
+        batch_size = config.batch_sizes.market_token * 10  # 10x config batch size
 
-        # Get current max token_id for auto-increment
-        max_id_result = self.conn.execute(
-            "SELECT COALESCE(MAX(token_id), 0) FROM MarketTokenDim"
-        ).fetchone()
-        next_id = max_id_result[0] + 1
+        try:
+            # Start transaction
+            self.conn.execute("BEGIN TRANSACTION")
 
-        for token in tokens:
-            self._records_processed += 1
+            # Get current max token_id for auto-increment
+            max_id_result = self.conn.execute(
+                "SELECT COALESCE(MAX(token_id), 0) FROM MarketTokenDim"
+            ).fetchone()
+            next_id = max_id_result[0] + 1
 
-            token_hash = token.get('token_id')  # bronze token_id -> silver token_hash
-            condition_id = token.get('condition_Id')
+            # Prepare batch insert data
+            inserts = []
+            skipped_no_market = 0
 
-            # Skip if already exists
-            if token_hash in existing_tokens:
-                self._records_skipped += 1
-                continue
+            for token in tokens:
+                self._records_processed += 1
 
-            # Lookup market_id
-            market_id = self._market_id_cache.get(condition_id)
-            if market_id is None:
-                self.logger.warning(
-                    f"No market_id found for condition_id: {condition_id}"
-                )
-                self._records_skipped += 1
-                continue
+                token_hash = token.get('token_id')  # bronze token_id -> silver token_hash
+                condition_id = token.get('condition_id')
 
-            try:
-                self.conn.execute("""
-                    INSERT INTO MarketTokenDim (
-                        token_id, token_hash, market_id, outcome, price, winner,
-                        ingestion_timestamp
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, [
+                # Skip if already exists
+                if token_hash in existing_tokens:
+                    self._records_skipped += 1
+                    continue
+
+                # Lookup market_id
+                market_id = self._market_id_cache.get(condition_id)
+                if market_id is None:
+                    skipped_no_market += 1
+                    self._records_skipped += 1
+                    continue
+
+                inserts.append((
                     next_id,
                     token_hash,
                     market_id,
@@ -214,15 +217,32 @@ class MarketTokenDimTransformer(BaseTransformer):
                     self._safe_float(token.get('price')),
                     token.get('winner', False),
                     now,
-                ])
-
+                ))
                 existing_tokens.add(token_hash)
                 next_id += 1
-                self._records_inserted += 1
 
-            except Exception as e:
-                self.logger.error(f"Error inserting token {token_hash}: {e}")
-                self._records_skipped += 1
+            if skipped_no_market > 0:
+                self.logger.warning(f"Skipped {skipped_no_market} tokens with no market_id")
+
+            # Batch INSERT using executemany
+            if inserts:
+                for i in range(0, len(inserts), batch_size):
+                    batch = inserts[i:i + batch_size]
+                    self.conn.executemany("""
+                        INSERT INTO MarketTokenDim (
+                            token_id, token_hash, market_id, outcome, price, winner,
+                            ingestion_timestamp
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, batch)
+                self._records_inserted = len(inserts)
+
+            # Commit transaction
+            self.conn.execute("COMMIT")
+
+        except Exception as e:
+            self.logger.error(f"Error in batch insert, rolling back: {e}")
+            self.conn.execute("ROLLBACK")
+            raise
 
     def _safe_float(self, value: Any) -> Optional[float]:
         """Safely convert a value to float."""

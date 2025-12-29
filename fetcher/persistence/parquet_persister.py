@@ -67,20 +67,17 @@ TRADE_SCHEMA = pa.schema([
 
 
 MARKET_SCHEMA = pa.schema([
-    ('condition_Id', pa.string()),
+    ('condition_id', pa.string()),
     ('end_date_iso', pa.string()),   
     ('game_start_time', pa.string()),
     ('description', pa.string()),
     ('question', pa.string()),
     ('maker_base_fee', pa.float64()),
     ('fpmm', pa.string()),
-    ('question', pa.string()),
     ('closed', pa.bool_()),
     ('active', pa.bool_()),
     ('volume', pa.float64()),
     ('liquidity', pa.float64()),
-    ('active', pa.bool8())
-
 ])
 
 GAMMA_MARKET_SCHEMA = pa.schema([
@@ -128,7 +125,7 @@ GAMMA_CATEGORY_SCHEMA = pa.schema([
 ])
 
 MARKET_TOKEN_SCHEMA = pa.schema([
-    ('condition_Id', pa.string()),
+    ('condition_id', pa.string()),
     ('price', pa.float64()),
     ('token_id', pa.string()),
     ('winner', pa.bool_()),
@@ -219,11 +216,11 @@ def load_market_parquet(
     columns: Optional[List[str]] = None
 ) -> List[str]:
     """
-    Load market IDs (condition_Id) from market parquet files.
+    Load market IDs (condition_id) from market parquet files.
     
     Args:
         parquet_path: Path to market parquet directory or file
-        columns: Optional list of columns to load (default: condition_Id only)
+        columns: Optional list of columns to load (default: condition_id only)
     
     Returns:
         List of market condition IDs
@@ -242,15 +239,15 @@ def load_market_parquet(
             # Support Hive partitioning
             glob_pattern = str(path / "**" / "*.parquet")
             query = f"""
-                SELECT DISTINCT condition_Id 
+                SELECT DISTINCT condition_id 
                 FROM read_parquet('{glob_pattern}', hive_partitioning=true)
-                WHERE condition_Id IS NOT NULL
+                WHERE condition_id IS NOT NULL
             """
         else:
             query = f"""
-                SELECT DISTINCT condition_Id 
+                SELECT DISTINCT condition_id 
                 FROM read_parquet('{path}')
-                WHERE condition_Id IS NOT NULL
+                WHERE condition_id IS NOT NULL
             """
         
         result = conn.execute(query).fetchall()

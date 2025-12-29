@@ -12,7 +12,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """
     Initialize the tag manager schema if tables don't exist.
 
-    Creates Tags and TagExamples tables.
+    Creates Tags, TagExamples, JudgeHistory, and MarketTagDim tables.
     """
     conn.execute("""
         CREATE TABLE IF NOT EXISTS Tags (
@@ -35,6 +35,30 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             is_positive BOOLEAN NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (tag_id, market_id)
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS JudgeHistory (
+            history_id INTEGER PRIMARY KEY,
+            tag_id INTEGER NOT NULL,
+            market_id INTEGER NOT NULL,
+            judge_votes VARCHAR,
+            consensus BOOLEAN,
+            human_decision BOOLEAN,
+            decided_by VARCHAR NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS MarketTagDim (
+            market_tag_id INTEGER PRIMARY KEY,
+            market_id INTEGER NOT NULL,
+            tag_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (market_id, tag_id)
         )
     """)
 

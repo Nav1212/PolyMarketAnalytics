@@ -192,7 +192,6 @@ class SilverLoadCoordinator:
             transformer = MarketDimTransformer(
                 conn=self._conn,
                 bronze_base_path=self.bronze_base_path,
-                nlp_enricher=self.nlp_enricher
             )
 
             records = transformer.transform()

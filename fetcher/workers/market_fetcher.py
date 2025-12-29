@@ -177,7 +177,7 @@ class MarketFetcher:
                     # Extract token data for parquet (matches MARKET_TOKEN_SCHEMA)
                     if self._market_token_queue is not None:
                         token_record = {
-                            'condition_Id': condition_id,
+                            'condition_id': condition_id,
                             'token_id': token_id,
                             'price': float(token.get('price', 0.0)) if token.get('price') else 0.0,
                             'winner': bool(token.get('winner', False)),
