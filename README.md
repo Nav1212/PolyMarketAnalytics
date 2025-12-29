@@ -161,8 +161,12 @@ Raw data from APIs stored in Hive-partitioned Parquet files:
 ```
 data/trades/dt=2024-12-26/trades_20241226_143022_123456.parquet
 ```
+<img width="1566" height="702" alt="image" src="https://github.com/user-attachments/assets/c89a7ef8-ee2f-48cb-9b82-4b8f22419261" />
+<img width="1295" height="662" alt="image" src="https://github.com/user-attachments/assets/2cf3651e-2073-48ac-8a71-8ec7a045c3ed" />
+vc  <img width="1391" height="594" alt="image" src="https://github.com/user-attachments/assets/d3726982-5138-43e3-90d6-98e1daece318" />
 
 ### Silver Layer (DuckDB)
+Prototype Implemented transformation untested
 Structured data warehouse with dimension and fact tables:
 - **MarketDim** - Market metadata (merged from CLOB and Gamma APIs)
 - **MarketTokenDim** - Outcome tokens per market

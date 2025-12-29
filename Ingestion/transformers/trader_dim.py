@@ -14,7 +14,7 @@ Logic:
 """
 
 from pathlib import Path
-from typing import Dict, Any, Set, List
+from typing import Set
 from datetime import datetime
 import duckdb
 
