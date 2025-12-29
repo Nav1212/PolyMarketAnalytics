@@ -10,9 +10,8 @@ Sources:
 Logic:
 1. Load all markets from CLOB API parquet files
 2. Enrich with category/tags from Gamma API
-3. Apply NLP enrichment (placeholder for future implementation)
-4. Deduplicate by condition_id
-5. Upsert into MarketDim table
+3. Deduplicate by condition_id
+4. Upsert into MarketDim table
 """
 
 from pathlib import Path
@@ -35,7 +34,6 @@ class MarketDimTransformer(BaseTransformer):
         self,
         conn: duckdb.DuckDBPyConnection,
         bronze_base_path: Path,
-        nlp_enricher: Optional[Any] = None
     ):
         """
         Initialize the MarketDim transformer.
@@ -43,10 +41,8 @@ class MarketDimTransformer(BaseTransformer):
         Args:
             conn: DuckDB connection to silver database
             bronze_base_path: Base path to bronze data directory
-            nlp_enricher: Optional NLP enrichment class (placeholder for future)
         """
         super().__init__(conn, bronze_base_path, "MarketDimTransformer")
-        self.nlp_enricher = nlp_enricher
 
     def get_bronze_path(self) -> Path:
         """Return path to CLOB markets (primary source)."""
@@ -67,9 +63,7 @@ class MarketDimTransformer(BaseTransformer):
         1. Load CLOB markets (primary source)
         2. Load Gamma markets for enrichment
         3. Merge sources (CLOB as SOT)
-        4. Apply NLP enrichment placeholder
-        5. Deduplicate by condition_id
-        6. Upsert into MarketDim
+        4. Upsert into MarketDim
 
         Returns:
             Number of records processed
@@ -89,13 +83,10 @@ class MarketDimTransformer(BaseTransformer):
         merged_markets = self._merge_sources(clob_markets, gamma_markets)
         self.logger.info(f"Merged into {len(merged_markets)} unique markets")
 
-        # Step 4: Apply NLP enrichment (placeholder)
-        enriched_markets = self._apply_nlp_enrichment(merged_markets)
+        # Step 4: Upsert into MarketDim
+        self._upsert_markets(merged_markets)
 
-        # Step 5: Upsert into MarketDim
-        self._upsert_markets(enriched_markets)
-
-        self._records_processed = len(enriched_markets)
+        self._records_processed = len(merged_markets)
         stats = self.get_stats()
         self.logger.info(
             f"MarketDim transformation complete: "
@@ -285,37 +276,6 @@ class MarketDimTransformer(BaseTransformer):
 
         return merged
 
-    def _apply_nlp_enrichment(
-        self,
-        markets: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Apply NLP enrichment to markets.
-
-        This is a placeholder for future NLP-based tag extraction,
-        category classification, and other enrichment.
-
-        Args:
-            markets: List of market records to enrich
-
-        Returns:
-            List of enriched market records
-        """
-        if self.nlp_enricher is None:
-            self.logger.info("NLP enricher not configured - skipping NLP enrichment")
-            return markets
-
-        # TODO: Implement NLP enrichment when the solution is ready
-        # Example future implementation:
-        # for market in markets:
-        #     nlp_result = self.nlp_enricher.enrich(market)
-        #     market['tags'] = nlp_result.get('tags')
-        #     if not market.get('category'):
-        #         market['category'] = nlp_result.get('predicted_category')
-
-        self.logger.info("NLP enrichment placeholder - no changes applied")
-        return markets
-
     def _upsert_markets(self, markets: List[Dict[str, Any]]) -> None:
         """
         Upsert markets into the MarketDim table.
@@ -371,9 +331,10 @@ class MarketDimTransformer(BaseTransformer):
                     self._records_updated += 1
                 else:
                     # Get next market_id
-                    max_id = self.conn.execute(
+                    result = self.conn.execute(
                         "SELECT COALESCE(MAX(market_id), 0) FROM MarketDim"
-                    ).fetchone()[0]
+                    ).fetchone()
+                    max_id = result[0] if result else 0
                     new_id = max_id + 1
 
                     # Insert new market

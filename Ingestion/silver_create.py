@@ -106,6 +106,79 @@ CREATE INDEX IF NOT EXISTS idx_trade_maker ON TradeFact(maker_id);
 CREATE INDEX IF NOT EXISTS idx_trade_taker ON TradeFact(taker_id);
 """
 
+
+# =============================================================================
+# USER-DEFINED TAGS TABLES
+# =============================================================================
+
+CREATE_TAGS = """
+CREATE TABLE IF NOT EXISTS Tags (
+    tag_id                  INTEGER PRIMARY KEY,
+    name                    VARCHAR NOT NULL UNIQUE,
+    description             TEXT,
+    is_active               BOOLEAN DEFAULT TRUE,
+    all_checked             BOOLEAN DEFAULT FALSE,
+    last_checked_market_id  INTEGER,
+    created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (last_checked_market_id) REFERENCES MarketDim(market_id)
+)
+"""
+
+CREATE_MARKET_TAG_DIM = """
+CREATE TABLE IF NOT EXISTS MarketTagDim (
+    market_tag_id   INTEGER PRIMARY KEY,
+    market_id       INTEGER NOT NULL,
+    tag_id          INTEGER NOT NULL,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (market_id) REFERENCES MarketDim(market_id),
+    FOREIGN KEY (tag_id) REFERENCES Tags(tag_id),
+    UNIQUE (market_id, tag_id)
+)
+"""
+
+CREATE_TAG_EXAMPLES = """
+CREATE TABLE IF NOT EXISTS TagExamples (
+    example_id      INTEGER PRIMARY KEY,
+    tag_id          INTEGER NOT NULL,
+    market_id       INTEGER NOT NULL,
+    is_positive     BOOLEAN NOT NULL,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tag_id) REFERENCES Tags(tag_id),
+    FOREIGN KEY (market_id) REFERENCES MarketDim(market_id),
+    UNIQUE (tag_id, market_id)
+)
+"""
+
+CREATE_JUDGE_HISTORY = """
+CREATE TABLE IF NOT EXISTS JudgeHistory (
+    history_id      INTEGER PRIMARY KEY,
+    tag_id          INTEGER NOT NULL,
+    market_id       INTEGER NOT NULL,
+    judge_votes     TEXT NOT NULL,
+    consensus       BOOLEAN,
+    human_decision  BOOLEAN,
+    decided_by      VARCHAR,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tag_id) REFERENCES Tags(tag_id),
+    FOREIGN KEY (market_id) REFERENCES MarketDim(market_id)
+)
+"""
+
+# Tag-related indexes
+CREATE_TAG_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_tags_active ON Tags(is_active);
+CREATE INDEX IF NOT EXISTS idx_tags_cursor ON Tags(last_checked_market_id);
+CREATE INDEX IF NOT EXISTS idx_market_tag_market ON MarketTagDim(market_id);
+CREATE INDEX IF NOT EXISTS idx_market_tag_tag ON MarketTagDim(tag_id);
+CREATE INDEX IF NOT EXISTS idx_tag_examples_tag ON TagExamples(tag_id);
+CREATE INDEX IF NOT EXISTS idx_tag_examples_market ON TagExamples(market_id);
+CREATE INDEX IF NOT EXISTS idx_judge_history_tag ON JudgeHistory(tag_id);
+CREATE INDEX IF NOT EXISTS idx_judge_history_market ON JudgeHistory(market_id);
+CREATE INDEX IF NOT EXISTS idx_judge_history_consensus ON JudgeHistory(consensus);
+"""
+
 # All table creation statements in dependency order
 ALL_TABLES = [
     ("MarketDim", CREATE_MARKET_DIM),
@@ -113,6 +186,10 @@ ALL_TABLES = [
     ("TraderDim", CREATE_TRADER_DIM),
     ("PriceHistoryFact", CREATE_PRICE_HISTORY_FACT),
     ("TradeFact", CREATE_TRADE_FACT),
+    ("Tags", CREATE_TAGS),
+    ("MarketTagDim", CREATE_MARKET_TAG_DIM),
+    ("TagExamples", CREATE_TAG_EXAMPLES),
+    ("JudgeHistory", CREATE_JUDGE_HISTORY),
 ]
 
 
@@ -122,15 +199,15 @@ ALL_TABLES = [
 
 def create_silver_schema(
     conn: Optional[duckdb.DuckDBPyConnection] = None,
-    db_path: Optional[Path] = None
+    db_path: Optional[Path] = None,
 ) -> duckdb.DuckDBPyConnection:
     """
     Create all Silver Layer tables if they don't exist.
-    
+
     Args:
         conn: Existing DuckDB connection (optional)
         db_path: Path to DuckDB file (uses default if not provided)
-        
+
     Returns:
         DuckDB connection with schema initialized
     """
@@ -138,9 +215,10 @@ def create_silver_schema(
         db_path = db_path or DEFAULT_SILVER_DB_PATH
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = duckdb.connect(str(db_path))
-    
+
     print("Creating Silver Layer schema...")
-    
+
+    # Create all tables
     for table_name, ddl in ALL_TABLES:
         try:
             conn.execute(ddl)
@@ -148,13 +226,19 @@ def create_silver_schema(
         except Exception as e:
             print(f"  ✗ {table_name}: {e}")
             raise
-    
-    # Create indexes
+
+    # Create core indexes
     for stmt in CREATE_INDEXES.strip().split(';'):
         if stmt.strip():
             conn.execute(stmt)
-    print("  ✓ Indexes created")
-    
+    print("  ✓ Core indexes created")
+
+    # Create tag indexes
+    for stmt in CREATE_TAG_INDEXES.strip().split(';'):
+        if stmt.strip():
+            conn.execute(stmt)
+    print("  ✓ Tag indexes created")
+
     return conn
 
 
@@ -164,7 +248,7 @@ def drop_silver_schema(
 ) -> None:
     """
     Drop all Silver Layer tables (use with caution).
-    
+
     Args:
         conn: DuckDB connection
         confirm: Must be True to actually drop tables
@@ -172,10 +256,13 @@ def drop_silver_schema(
     if not confirm:
         print("Set confirm=True to drop tables")
         return
-    
-    # Drop in reverse dependency order
-    tables = ["TradeFact", "PriceHistoryFact", "MarketTokenDim", "TraderDim", "MarketDim"]
-    
+
+    # Drop in reverse dependency order (dependent tables first)
+    tables = [
+        "JudgeHistory", "TagExamples", "MarketTagDim", "Tags",
+        "TradeFact", "PriceHistoryFact", "MarketTokenDim", "TraderDim", "MarketDim"
+    ]
+
     for table in tables:
         try:
             conn.execute(f"DROP TABLE IF EXISTS {table}")
