@@ -19,6 +19,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             tag_id INTEGER PRIMARY KEY,
             name VARCHAR NOT NULL UNIQUE,
             description VARCHAR,
+            categories VARCHAR,
             is_active BOOLEAN DEFAULT TRUE,
             all_checked BOOLEAN DEFAULT FALSE,
             last_checked_market_id INTEGER,
@@ -26,6 +27,12 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    # Add categories column if it doesn't exist (for existing databases)
+    try:
+        conn.execute("ALTER TABLE Tags ADD COLUMN categories VARCHAR")
+    except:
+        pass  # Column already exists
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS TagExamples (

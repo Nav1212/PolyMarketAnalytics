@@ -257,6 +257,7 @@ class JudgeService:
         search_query: Optional[str] = None,
         decision_filter: Optional[str] = None,
         source_filter: Optional[str] = None,
+        category_filter: Optional[str] = None,
     ) -> list[JudgeHistoryEntry]:
         """
         Get recent judge history entries with optional filtering.
@@ -267,6 +268,7 @@ class JudgeService:
             search_query: Search market questions (case-insensitive)
             decision_filter: "Positive", "Negative", or "Pending"
             source_filter: "LLM Consensus" or "Human"
+            category_filter: Filter by market category
         """
         sql = """
             SELECT h.history_id, h.tag_id, h.market_id, h.judge_votes, h.consensus,
@@ -286,6 +288,10 @@ class JudgeService:
         if search_query:
             sql += " AND m.question ILIKE ?"
             params.append(f"%{search_query}%")
+
+        if category_filter:
+            sql += " AND m.category = ?"
+            params.append(category_filter)
 
         if decision_filter:
             if decision_filter == "Positive":
@@ -317,7 +323,11 @@ class JudgeService:
         majority_yes_only: bool = True,
     ) -> list[JudgeHistoryEntry]:
         """
-        Get entries that need human review (no consensus, no human decision).
+        Get entries that need human review - all markets where majority voted YES.
+
+        This includes:
+        - Markets without consensus (split votes) where majority was YES
+        - Markets with YES consensus that haven't been human-reviewed
 
         Args:
             tag_id: Filter by tag ID
@@ -331,7 +341,7 @@ class JudgeService:
             FROM JudgeHistory h
             JOIN MarketDim m ON h.market_id = m.market_id
             JOIN Tags t ON h.tag_id = t.tag_id
-            WHERE h.consensus IS NULL AND h.human_decision IS NULL
+            WHERE h.human_decision IS NULL
         """
         params = []
 
@@ -340,7 +350,8 @@ class JudgeService:
             params.append(tag_id)
 
         sql += " ORDER BY h.created_at DESC LIMIT ?"
-        params.append(limit)
+        # Fetch more than needed since we'll filter in Python
+        params.append(limit * 10)
 
         rows = self.conn.execute(sql, params).fetchall()
         entries = [self._row_to_entry(r) for r in rows]
@@ -349,13 +360,21 @@ class JudgeService:
         if majority_yes_only:
             filtered = []
             for entry in entries:
-                yes_count = sum(1 for v in entry.judge_votes.values() if v is True)
-                no_count = sum(1 for v in entry.judge_votes.values() if v is False)
+                # Count votes - handle both bool and truthy values
+                yes_count = 0
+                no_count = 0
+                for v in entry.judge_votes.values():
+                    if v is True or v == "true" or v == 1:
+                        yes_count += 1
+                    elif v is False or v == "false" or v == 0:
+                        no_count += 1
                 if yes_count > no_count:
                     filtered.append(entry)
+                    if len(filtered) >= limit:
+                        break
             return filtered
 
-        return entries
+        return entries[:limit]
 
     def _row_to_entry(self, row) -> JudgeHistoryEntry:
         """Convert a database row to a JudgeHistoryEntry."""

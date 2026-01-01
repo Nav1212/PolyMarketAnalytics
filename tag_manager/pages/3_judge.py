@@ -89,9 +89,14 @@ def main():
 
     with tab1:
         st.subheader("Markets Needing Human Review")
-        st.caption("These markets had no consensus from LLM judges")
+        st.caption("All markets where the majority of LLM judges voted YES")
 
         pending = judge_service.get_pending_reviews(tag_id=tag.tag_id, limit=10)
+
+        # Also get all pending (without majority filter) for comparison
+        all_pending = judge_service.get_pending_reviews(tag_id=tag.tag_id, limit=50, majority_yes_only=False)
+        if all_pending and not pending:
+            st.info(f"Found {len(all_pending)} unreviewed markets, but none have majority YES votes.")
 
         if not pending:
             st.success("No pending reviews! All caught up.")
