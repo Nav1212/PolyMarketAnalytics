@@ -19,6 +19,7 @@ from datetime import datetime
 import duckdb
 
 from Ingestion.transformers.base import BaseTransformer
+from fetcher.config import get_config
 
 
 class TraderDimTransformer(BaseTransformer):
@@ -179,7 +180,7 @@ class TraderDimTransformer(BaseTransformer):
 
     def _insert_wallets(self, wallets: Set[str]) -> None:
         """
-        Insert new wallet addresses into TraderDim.
+        Insert new wallet addresses into TraderDim using batch operations.
 
         Args:
             wallets: Set of wallet addresses to insert
@@ -188,23 +189,39 @@ class TraderDimTransformer(BaseTransformer):
             return
 
         now = datetime.now()
+        config = get_config()
+        batch_size = config.batch_sizes.trade * 10  # 10x config batch size
 
-        # Get current max trader_id for auto-increment
-        max_id_result = self.conn.execute(
-            "SELECT COALESCE(MAX(trader_id), 0) FROM TraderDim"
-        ).fetchone()
-        next_id = max_id_result[0] + 1
+        try:
+            # Start transaction
+            self.conn.execute("BEGIN TRANSACTION")
 
-        for wallet in wallets:
-            try:
-                self.conn.execute("""
+            # Get current max trader_id for auto-increment
+            max_id_result = self.conn.execute(
+                "SELECT COALESCE(MAX(trader_id), 0) FROM TraderDim"
+            ).fetchone()
+            next_id = max_id_result[0] + 1
+
+            # Prepare batch insert data
+            inserts = []
+            for wallet in wallets:
+                inserts.append((next_id, wallet, now))
+                next_id += 1
+
+            # Batch INSERT using executemany
+            for i in range(0, len(inserts), batch_size):
+                batch = inserts[i:i + batch_size]
+                self.conn.executemany("""
                     INSERT INTO TraderDim (trader_id, wallet_address, created_at)
                     VALUES (?, ?, ?)
-                """, [next_id, wallet, now])
+                """, batch)
 
-                next_id += 1
-                self._records_inserted += 1
+            self._records_inserted = len(inserts)
 
-            except Exception as e:
-                self.logger.error(f"Error inserting wallet {wallet}: {e}")
-                self._records_skipped += 1
+            # Commit transaction
+            self.conn.execute("COMMIT")
+
+        except Exception as e:
+            self.logger.error(f"Error in batch insert, rolling back: {e}")
+            self.conn.execute("ROLLBACK")
+            raise

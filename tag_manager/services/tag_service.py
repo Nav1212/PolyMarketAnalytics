@@ -69,7 +69,7 @@ class TagService:
         """
         if active_only:
             query += " WHERE t.is_active = TRUE"
-        query += " GROUP BY t.tag_id ORDER BY t.name"
+        query += " GROUP BY t.tag_id, t.name, t.description, t.is_active, t.all_checked, t.last_checked_market_id, t.created_at, t.updated_at ORDER BY t.name"
 
         rows = self.conn.execute(query).fetchall()
         return [
@@ -101,7 +101,7 @@ class TagService:
             FROM Tags t
             LEFT JOIN TagExamples e ON t.tag_id = e.tag_id
             WHERE t.tag_id = ?
-            GROUP BY t.tag_id
+            GROUP BY t.tag_id, t.name, t.description, t.is_active, t.all_checked, t.last_checked_market_id, t.created_at, t.updated_at
             """,
             [tag_id]
         ).fetchone()
@@ -190,8 +190,9 @@ class TagService:
         return self.get_tag(tag_id)
 
     def delete_tag(self, tag_id: int) -> bool:
-        """Delete a tag and all its examples."""
-        # Delete examples first
+        """Delete a tag and all its related records."""
+        # Delete all FK references first to avoid constraint violations
+        self.conn.execute("DELETE FROM JudgeHistory WHERE tag_id = ?", [tag_id])
         self.conn.execute("DELETE FROM TagExamples WHERE tag_id = ?", [tag_id])
         self.conn.execute("DELETE FROM MarketTagDim WHERE tag_id = ?", [tag_id])
         result = self.conn.execute("DELETE FROM Tags WHERE tag_id = ?", [tag_id])

@@ -14,7 +14,7 @@ Schema Overview:
     TradeFact       - Individual trade records
 
 Storage Optimizations:
-    - REAL (4 bytes) for prices instead of DOUBLE (8 bytes)
+    - DOUBLE for prices (standard precision)
     - INTEGER FKs for trader wallets (saves ~76 bytes per trade)
     - Composite primary keys where appropriate
 """
@@ -35,76 +35,81 @@ DEFAULT_SILVER_DB_PATH = Path(r"C:\Users\User\Desktop\VibeCoding\PolyMarketData\
 CREATE_MARKET_DIM = """
 CREATE TABLE IF NOT EXISTS MarketDim (
     market_id       INTEGER PRIMARY KEY,
-    condition_id    TEXT NOT NULL UNIQUE,
-    question        TEXT,
-    description     TEXT,
+    condition_id    VARCHAR NOT NULL UNIQUE,
+    question        VARCHAR,
+    description     VARCHAR,
     start_dt        TIMESTAMP,
     end_dt          TIMESTAMP,
-    volume          REAL,
-    liquidity       REAL,
+    volume          DOUBLE,
+    liquidity       DOUBLE,
     active          BOOLEAN DEFAULT TRUE,
     closed          BOOLEAN DEFAULT FALSE,
-    category        TEXT,
-    tags            TEXT,
+    category        VARCHAR,
+    tags            VARCHAR,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
+);
 """
 
 CREATE_MARKET_TOKEN_DIM = """
 CREATE TABLE IF NOT EXISTS MarketTokenDim (
     token_id            INTEGER PRIMARY KEY,
-    token_hash          TEXT NOT NULL UNIQUE,
-    market_id           INTEGER NOT NULL REFERENCES MarketDim(market_id),
-    outcome             TEXT,
-    price               REAL,
+    token_hash          VARCHAR NOT NULL UNIQUE,
+    market_id           INTEGER NOT NULL,
+    outcome             VARCHAR,
+    price               DOUBLE,
     winner              BOOLEAN DEFAULT FALSE,
-    ingestion_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-)
+    ingestion_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (market_id) REFERENCES MarketDim(market_id)
+);
 """
 
 CREATE_TRADER_DIM = """
 CREATE TABLE IF NOT EXISTS TraderDim (
     trader_id       INTEGER PRIMARY KEY,
-    wallet_address  TEXT NOT NULL UNIQUE,
+    wallet_address  VARCHAR NOT NULL UNIQUE,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
+);
 """
 
 CREATE_PRICE_HISTORY_FACT = """
 CREATE TABLE IF NOT EXISTS PriceHistoryFact (
-    id                  TEXT PRIMARY KEY,
-    token_id            INTEGER NOT NULL REFERENCES MarketTokenDim(token_id),
+    id                  VARCHAR PRIMARY KEY,
+    token_id            INTEGER NOT NULL,
     timestamp           TIMESTAMP NOT NULL,
-    price               REAL NOT NULL,
-    ingestion_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-)
+    price               DOUBLE NOT NULL,
+    ingestion_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (token_id) REFERENCES MarketTokenDim(token_id)
+);
 """
 
 CREATE_TRADE_FACT = """
 CREATE TABLE IF NOT EXISTS TradeFact (
-    trade_id            TEXT PRIMARY KEY,
-    token_id            INTEGER NOT NULL REFERENCES MarketTokenDim(token_id),
+    trade_id            VARCHAR PRIMARY KEY,
+    token_id            INTEGER NOT NULL,
     timestamp           TIMESTAMP NOT NULL,
-    price               REAL NOT NULL,
-    size                REAL NOT NULL,
-    side                TEXT,
-    maker_id            INTEGER REFERENCES TraderDim(trader_id),
-    taker_id            INTEGER REFERENCES TraderDim(trader_id),
-    ingestion_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-)
+    price               DOUBLE NOT NULL,
+    size                DOUBLE NOT NULL,
+    side                VARCHAR,
+    maker_id            INTEGER,
+    taker_id            INTEGER,
+    ingestion_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (token_id) REFERENCES MarketTokenDim(token_id),
+    FOREIGN KEY (maker_id) REFERENCES TraderDim(trader_id),
+    FOREIGN KEY (taker_id) REFERENCES TraderDim(trader_id)
+);
 """
 
 # Indexes for query performance
-CREATE_INDEXES = """
-CREATE INDEX IF NOT EXISTS idx_market_token_market ON MarketTokenDim(market_id);
-CREATE INDEX IF NOT EXISTS idx_price_token ON PriceHistoryFact(token_id);
-CREATE INDEX IF NOT EXISTS idx_price_timestamp ON PriceHistoryFact(timestamp);
-CREATE INDEX IF NOT EXISTS idx_trade_token ON TradeFact(token_id);
-CREATE INDEX IF NOT EXISTS idx_trade_timestamp ON TradeFact(timestamp);
-CREATE INDEX IF NOT EXISTS idx_trade_maker ON TradeFact(maker_id);
-CREATE INDEX IF NOT EXISTS idx_trade_taker ON TradeFact(taker_id);
-"""
+CREATE_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_market_token_market ON MarketTokenDim(market_id);",
+    "CREATE INDEX IF NOT EXISTS idx_price_token ON PriceHistoryFact(token_id);",
+    "CREATE INDEX IF NOT EXISTS idx_price_timestamp ON PriceHistoryFact(timestamp);",
+    "CREATE INDEX IF NOT EXISTS idx_trade_token ON TradeFact(token_id);",
+    "CREATE INDEX IF NOT EXISTS idx_trade_timestamp ON TradeFact(timestamp);",
+    "CREATE INDEX IF NOT EXISTS idx_trade_maker ON TradeFact(maker_id);",
+    "CREATE INDEX IF NOT EXISTS idx_trade_taker ON TradeFact(taker_id);",
+]
 
 
 # =============================================================================
@@ -115,14 +120,14 @@ CREATE_TAGS = """
 CREATE TABLE IF NOT EXISTS Tags (
     tag_id                  INTEGER PRIMARY KEY,
     name                    VARCHAR NOT NULL UNIQUE,
-    description             TEXT,
+    description             VARCHAR,
     is_active               BOOLEAN DEFAULT TRUE,
     all_checked             BOOLEAN DEFAULT FALSE,
     last_checked_market_id  INTEGER,
     created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (last_checked_market_id) REFERENCES MarketDim(market_id)
-)
+);
 """
 
 CREATE_MARKET_TAG_DIM = """
@@ -131,10 +136,10 @@ CREATE TABLE IF NOT EXISTS MarketTagDim (
     market_id       INTEGER NOT NULL,
     tag_id          INTEGER NOT NULL,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (market_id, tag_id),
     FOREIGN KEY (market_id) REFERENCES MarketDim(market_id),
-    FOREIGN KEY (tag_id) REFERENCES Tags(tag_id),
-    UNIQUE (market_id, tag_id)
-)
+    FOREIGN KEY (tag_id) REFERENCES Tags(tag_id)
+);
 """
 
 CREATE_TAG_EXAMPLES = """
@@ -144,10 +149,10 @@ CREATE TABLE IF NOT EXISTS TagExamples (
     market_id       INTEGER NOT NULL,
     is_positive     BOOLEAN NOT NULL,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (tag_id, market_id),
     FOREIGN KEY (tag_id) REFERENCES Tags(tag_id),
-    FOREIGN KEY (market_id) REFERENCES MarketDim(market_id),
-    UNIQUE (tag_id, market_id)
-)
+    FOREIGN KEY (market_id) REFERENCES MarketDim(market_id)
+);
 """
 
 CREATE_JUDGE_HISTORY = """
@@ -155,7 +160,7 @@ CREATE TABLE IF NOT EXISTS JudgeHistory (
     history_id      INTEGER PRIMARY KEY,
     tag_id          INTEGER NOT NULL,
     market_id       INTEGER NOT NULL,
-    judge_votes     TEXT NOT NULL,
+    judge_votes     VARCHAR NOT NULL,
     consensus       BOOLEAN,
     human_decision  BOOLEAN,
     decided_by      VARCHAR,
@@ -163,21 +168,21 @@ CREATE TABLE IF NOT EXISTS JudgeHistory (
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (tag_id) REFERENCES Tags(tag_id),
     FOREIGN KEY (market_id) REFERENCES MarketDim(market_id)
-)
+);
 """
 
 # Tag-related indexes
-CREATE_TAG_INDEXES = """
-CREATE INDEX IF NOT EXISTS idx_tags_active ON Tags(is_active);
-CREATE INDEX IF NOT EXISTS idx_tags_cursor ON Tags(last_checked_market_id);
-CREATE INDEX IF NOT EXISTS idx_market_tag_market ON MarketTagDim(market_id);
-CREATE INDEX IF NOT EXISTS idx_market_tag_tag ON MarketTagDim(tag_id);
-CREATE INDEX IF NOT EXISTS idx_tag_examples_tag ON TagExamples(tag_id);
-CREATE INDEX IF NOT EXISTS idx_tag_examples_market ON TagExamples(market_id);
-CREATE INDEX IF NOT EXISTS idx_judge_history_tag ON JudgeHistory(tag_id);
-CREATE INDEX IF NOT EXISTS idx_judge_history_market ON JudgeHistory(market_id);
-CREATE INDEX IF NOT EXISTS idx_judge_history_consensus ON JudgeHistory(consensus);
-"""
+CREATE_TAG_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_tags_active ON Tags(is_active);",
+    "CREATE INDEX IF NOT EXISTS idx_tags_cursor ON Tags(last_checked_market_id);",
+    "CREATE INDEX IF NOT EXISTS idx_market_tag_market ON MarketTagDim(market_id);",
+    "CREATE INDEX IF NOT EXISTS idx_market_tag_tag ON MarketTagDim(tag_id);",
+    "CREATE INDEX IF NOT EXISTS idx_tag_examples_tag ON TagExamples(tag_id);",
+    "CREATE INDEX IF NOT EXISTS idx_tag_examples_market ON TagExamples(market_id);",
+    "CREATE INDEX IF NOT EXISTS idx_judge_history_tag ON JudgeHistory(tag_id);",
+    "CREATE INDEX IF NOT EXISTS idx_judge_history_market ON JudgeHistory(market_id);",
+    "CREATE INDEX IF NOT EXISTS idx_judge_history_consensus ON JudgeHistory(consensus);",
+]
 
 # All table creation statements in dependency order
 ALL_TABLES = [
@@ -228,15 +233,13 @@ def create_silver_schema(
             raise
 
     # Create core indexes
-    for stmt in CREATE_INDEXES.strip().split(';'):
-        if stmt.strip():
-            conn.execute(stmt)
+    for stmt in CREATE_INDEXES:
+        conn.execute(stmt)
     print("  ✓ Core indexes created")
 
     # Create tag indexes
-    for stmt in CREATE_TAG_INDEXES.strip().split(';'):
-        if stmt.strip():
-            conn.execute(stmt)
+    for stmt in CREATE_TAG_INDEXES:
+        conn.execute(stmt)
     print("  ✓ Tag indexes created")
 
     return conn
@@ -276,8 +279,8 @@ def get_table_counts(conn: duckdb.DuckDBPyConnection) -> Dict[str, int]:
     counts = {}
     for table_name, _ in ALL_TABLES:
         try:
-            count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
-            counts[table_name] = count
+            row = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
+            counts[table_name] = row[0] if row else 0
         except:
             counts[table_name] = -1
     return counts
@@ -355,9 +358,10 @@ class IdMapper:
             return self._market_cache[condition_id]
         
         # Get next ID
-        max_id = self.conn.execute(
+        row = self.conn.execute(
             "SELECT COALESCE(MAX(market_id), 0) FROM MarketDim"
-        ).fetchone()[0]
+        ).fetchone()
+        max_id = row[0] if row else 0
         new_id = max_id + 1
         
         # Insert minimal record (will be updated with full data later)
@@ -387,9 +391,10 @@ class IdMapper:
                 new_ids.append(cid)
         
         if new_ids:
-            max_id = self.conn.execute(
+            row = self.conn.execute(
                 "SELECT COALESCE(MAX(market_id), 0) FROM MarketDim"
-            ).fetchone()[0]
+            ).fetchone()
+            max_id = row[0] if row else 0
             
             for i, cid in enumerate(new_ids, start=1):
                 new_market_id = max_id + i
@@ -420,9 +425,10 @@ class IdMapper:
         if token_hash in self._token_cache:
             return self._token_cache[token_hash]
         
-        max_id = self.conn.execute(
+        row = self.conn.execute(
             "SELECT COALESCE(MAX(token_id), 0) FROM MarketTokenDim"
-        ).fetchone()[0]
+        ).fetchone()
+        max_id = row[0] if row else 0
         new_id = max_id + 1
         
         self.conn.execute(
@@ -459,9 +465,10 @@ class IdMapper:
                 new_tokens.append((token_hash, market_id, outcome))
         
         if new_tokens:
-            max_id = self.conn.execute(
+            row = self.conn.execute(
                 "SELECT COALESCE(MAX(token_id), 0) FROM MarketTokenDim"
-            ).fetchone()[0]
+            ).fetchone()
+            max_id = row[0] if row else 0
             
             now = datetime.now()
             for i, (token_hash, market_id, outcome) in enumerate(new_tokens, start=1):
@@ -490,9 +497,10 @@ class IdMapper:
         if wallet_address in self._trader_cache:
             return self._trader_cache[wallet_address]
         
-        max_id = self.conn.execute(
+        row = self.conn.execute(
             "SELECT COALESCE(MAX(trader_id), 0) FROM TraderDim"
-        ).fetchone()[0]
+        ).fetchone()
+        max_id = row[0] if row else 0
         new_id = max_id + 1
         
         self.conn.execute(
@@ -521,9 +529,10 @@ class IdMapper:
                 new_wallets.append(wallet)
         
         if new_wallets:
-            max_id = self.conn.execute(
+            row = self.conn.execute(
                 "SELECT COALESCE(MAX(trader_id), 0) FROM TraderDim"
-            ).fetchone()[0]
+            ).fetchone()
+            max_id = row[0] if row else 0
             
             for i, wallet in enumerate(new_wallets, start=1):
                 new_trader_id = max_id + i

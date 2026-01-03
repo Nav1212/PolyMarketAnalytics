@@ -387,7 +387,7 @@ class FetcherCoordinator:
         use_swappable: bool = True
     ) -> Union[Queue, SwappableQueue]:
         """
-        Run only MarketFetcher.
+        Run only MarketFetcher with parquet persistence.
         
         Args:
             num_workers: Number of worker threads (default from config)
@@ -399,19 +399,19 @@ class FetcherCoordinator:
         num_workers = num_workers or self._config.workers.market
         
         if use_swappable:
-            output_queue = SwappableQueue()
+            output_queue, self._market_persister = create_market_persisted_queue(
+                threshold=self._config.queues.market_threshold,
+                output_dir=self._config.output_dirs.market,
+                auto_start=True
+            )
         else:
             output_queue = Queue()
         
         self._market_fetcher = MarketFetcher(output_queue=output_queue)
         
-        market_thread = Thread(
-            target=self._market_fetcher.run_workers,
-            kwargs={"num_workers": num_workers},
-            name="MarketFetcher-Coordinator"
-        )
-        market_thread.start()
-        self._worker_threads.append(market_thread)
+        # Start worker threads directly (run_workers returns thread list)
+        worker_threads = self._market_fetcher.run_workers(num_workers=num_workers)
+        self._worker_threads.extend(worker_threads)
         
         return output_queue
     

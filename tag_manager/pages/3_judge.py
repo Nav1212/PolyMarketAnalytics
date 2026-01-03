@@ -15,7 +15,10 @@ def init_state():
         st.session_state.db_conn = get_connection()
     if "ollama_available" not in st.session_state:
         client = OllamaClient()
-        st.session_state.ollama_available = client.is_available()
+        # Auto-start Ollama if not running
+        st.session_state.ollama_available = client.ensure_running(max_wait=30.0)
+        if st.session_state.ollama_available:
+            st.session_state.available_models = client.list_models()
         client.close()
 
 
@@ -31,6 +34,12 @@ def main():
     if not st.session_state.ollama_available:
         st.warning("⚠️ Ollama is not running. LLM classification won't work.")
         st.caption("Start Ollama with `ollama serve` to enable automatic classification.")
+    else:
+        models = st.session_state.get("available_models", [])
+        if models:
+            st.success(f"✅ Ollama ready with {len(models)} model(s): {', '.join(models[:3])}")
+        else:
+            st.warning("⚠️ Ollama running but no models found. Run `ollama pull llama3.2` to install a model.")
 
     # Tag selection
     tags = tag_service.list_tags(active_only=True)

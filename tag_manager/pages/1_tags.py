@@ -4,7 +4,7 @@ Tags Page - View and manage tags.
 
 import streamlit as st
 from tag_manager.db import get_connection
-from tag_manager.services import TagService
+from tag_manager.services import TagService, MarketService
 
 st.set_page_config(page_title="Tags", page_icon="📋", layout="wide")
 
@@ -17,6 +17,7 @@ def init_state():
 def main():
     init_state()
     tag_service = TagService(st.session_state.db_conn)
+    market_service = MarketService(st.session_state.db_conn)
 
     st.title("📋 Tags")
 
@@ -67,7 +68,7 @@ def main():
     # Display tags
     for tag in filtered_tags:
         with st.container():
-            col1, col2, col3 = st.columns([4, 2, 1])
+            col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
 
             with col1:
                 status = "🟢" if tag.is_active else "⚪"
@@ -80,10 +81,17 @@ def main():
                     st.caption("*No description*")
 
             with col2:
-                st.metric("Total Examples", tag.example_count)
-                st.caption(f"✅ {tag.positive_count} positive | ❌ {tag.negative_count} negative")
+                st.metric("Training Examples", tag.example_count)
+                st.caption(f"✅ {tag.positive_count} pos | ❌ {tag.negative_count} neg")
 
             with col3:
+                # Get classification counts
+                counts = market_service.get_classification_counts(tag.tag_id)
+                total_classified = counts['positive'] + counts['negative']
+                st.metric("Classified", total_classified)
+                st.caption(f"✅ {counts['positive']} pos | ❌ {counts['negative']} neg")
+
+            with col4:
                 # Action buttons
                 if st.button("✏️ Edit", key=f"edit_{tag.tag_id}"):
                     st.session_state[f"editing_{tag.tag_id}"] = True

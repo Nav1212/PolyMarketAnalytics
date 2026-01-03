@@ -4,6 +4,8 @@ Ollama HTTP client for LLM interactions.
 Simple synchronous client for generating text completions using local Ollama server.
 """
 
+import subprocess
+import time
 import requests
 from typing import Optional
 from dataclasses import dataclass
@@ -85,6 +87,41 @@ class OllamaClient:
             return response.status_code == 200
         except requests.RequestException:
             return False
+
+    def ensure_running(self, max_wait: float = 30.0) -> bool:
+        """
+        Ensure Ollama is running, starting it if necessary.
+
+        Args:
+            max_wait: Maximum seconds to wait for Ollama to start
+
+        Returns:
+            True if Ollama is running, False if it couldn't be started
+        """
+        if self.is_available():
+            return True
+
+        # Try to start Ollama
+        try:
+            subprocess.Popen(
+                ["ollama", "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0,
+            )
+        except FileNotFoundError:
+            return False
+        except Exception:
+            return False
+
+        # Wait for Ollama to be ready
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            if self.is_available():
+                return True
+            time.sleep(0.5)
+
+        return False
 
     def list_models(self) -> list[str]:
         """Get list of available models."""

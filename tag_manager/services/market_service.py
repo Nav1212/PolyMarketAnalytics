@@ -155,6 +155,35 @@ class MarketService:
             [tag_id]
         ).fetchone()[0]
 
+    def get_classification_counts(self, tag_id: int) -> dict:
+        """
+        Get counts of positive and negative classifications for a tag.
+
+        Returns:
+            dict with 'positive' and 'negative' counts
+        """
+        # Count markets in MarketTagDim (positive classifications)
+        positive = self.conn.execute(
+            "SELECT COUNT(*) FROM MarketTagDim WHERE tag_id = ?",
+            [tag_id]
+        ).fetchone()[0]
+
+        # Count negative classifications from JudgeHistory
+        # (consensus=False OR human_decision=False)
+        negative = self.conn.execute(
+            """
+            SELECT COUNT(*) FROM JudgeHistory
+            WHERE tag_id = ?
+              AND (consensus = FALSE OR human_decision = FALSE)
+            """,
+            [tag_id]
+        ).fetchone()[0]
+
+        return {
+            'positive': positive,
+            'negative': negative,
+        }
+
     def _row_to_market(self, row) -> Market:
         """Convert a database row to a Market object."""
         return Market(
