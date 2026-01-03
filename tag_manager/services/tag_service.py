@@ -2,9 +2,10 @@
 Tag service for CRUD operations on tags and examples.
 """
 
+import json
 from datetime import datetime
 from typing import Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import duckdb
 
 
@@ -14,6 +15,7 @@ class Tag:
     tag_id: int
     name: str
     description: Optional[str]
+    categories: list[str]
     is_active: bool
     all_checked: bool
     last_checked_market_id: Optional[int]
@@ -49,6 +51,15 @@ class TagService:
     def __init__(self, conn: duckdb.DuckDBPyConnection):
         self.conn = conn
 
+    def _parse_categories(self, categories_str: Optional[str]) -> list[str]:
+        """Parse categories JSON string to list."""
+        if not categories_str:
+            return []
+        try:
+            return json.loads(categories_str)
+        except (json.JSONDecodeError, TypeError):
+            return []
+
     def list_tags(self, active_only: bool = False) -> list[Tag]:
         """Get all tags with example counts."""
         query = """
@@ -56,6 +67,7 @@ class TagService:
                 t.tag_id,
                 t.name,
                 t.description,
+                t.categories,
                 t.is_active,
                 t.all_checked,
                 t.last_checked_market_id,
@@ -69,7 +81,7 @@ class TagService:
         """
         if active_only:
             query += " WHERE t.is_active = TRUE"
-        query += " GROUP BY t.tag_id, t.name, t.description, t.is_active, t.all_checked, t.last_checked_market_id, t.created_at, t.updated_at ORDER BY t.name"
+        query += " GROUP BY t.tag_id, t.name, t.description, t.categories, t.is_active, t.all_checked, t.last_checked_market_id, t.created_at, t.updated_at ORDER BY t.name"
 
         rows = self.conn.execute(query).fetchall()
         return [
@@ -77,14 +89,15 @@ class TagService:
                 tag_id=r[0],
                 name=r[1],
                 description=r[2],
-                is_active=r[3],
-                all_checked=r[4],
-                last_checked_market_id=r[5],
-                created_at=r[6],
-                updated_at=r[7],
-                example_count=r[8] or 0,
-                positive_count=r[9] or 0,
-                negative_count=r[10] or 0,
+                categories=self._parse_categories(r[3]),
+                is_active=r[4],
+                all_checked=r[5],
+                last_checked_market_id=r[6],
+                created_at=r[7],
+                updated_at=r[8],
+                example_count=r[9] or 0,
+                positive_count=r[10] or 0,
+                negative_count=r[11] or 0,
             )
             for r in rows
         ]
@@ -94,14 +107,14 @@ class TagService:
         row = self.conn.execute(
             """
             SELECT
-                t.tag_id, t.name, t.description, t.is_active, t.all_checked,
+                t.tag_id, t.name, t.description, t.categories, t.is_active, t.all_checked,
                 t.last_checked_market_id, t.created_at, t.updated_at,
                 COUNT(e.example_id), SUM(CASE WHEN e.is_positive THEN 1 ELSE 0 END),
                 SUM(CASE WHEN NOT e.is_positive THEN 1 ELSE 0 END)
             FROM Tags t
             LEFT JOIN TagExamples e ON t.tag_id = e.tag_id
             WHERE t.tag_id = ?
-            GROUP BY t.tag_id, t.name, t.description, t.is_active, t.all_checked, t.last_checked_market_id, t.created_at, t.updated_at
+            GROUP BY t.tag_id, t.name, t.description, t.categories, t.is_active, t.all_checked, t.last_checked_market_id, t.created_at, t.updated_at
             """,
             [tag_id]
         ).fetchone()
@@ -113,14 +126,15 @@ class TagService:
             tag_id=row[0],
             name=row[1],
             description=row[2],
-            is_active=row[3],
-            all_checked=row[4],
-            last_checked_market_id=row[5],
-            created_at=row[6],
-            updated_at=row[7],
-            example_count=row[8] or 0,
-            positive_count=row[9] or 0,
-            negative_count=row[10] or 0,
+            categories=self._parse_categories(row[3]),
+            is_active=row[4],
+            all_checked=row[5],
+            last_checked_market_id=row[6],
+            created_at=row[7],
+            updated_at=row[8],
+            example_count=row[9] or 0,
+            positive_count=row[10] or 0,
+            negative_count=row[11] or 0,
         )
 
     def get_tag_by_name(self, name: str) -> Optional[Tag]:
@@ -135,7 +149,12 @@ class TagService:
 
         return self.get_tag(row[0])
 
-    def create_tag(self, name: str, description: Optional[str] = None) -> Tag:
+    def create_tag(
+        self,
+        name: str,
+        description: Optional[str] = None,
+        categories: Optional[list[str]] = None,
+    ) -> Tag:
         """Create a new tag."""
         # Get next ID
         max_id = self.conn.execute(
@@ -144,12 +163,14 @@ class TagService:
         new_id = max_id + 1
 
         now = datetime.now()
+        categories_json = json.dumps(categories) if categories else None
+
         self.conn.execute(
             """
-            INSERT INTO Tags (tag_id, name, description, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO Tags (tag_id, name, description, categories, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            [new_id, name, description, now, now]
+            [new_id, name, description, categories_json, now, now]
         )
 
         return self.get_tag(new_id)
@@ -159,6 +180,7 @@ class TagService:
         tag_id: int,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        categories: Optional[list[str]] = None,
         is_active: Optional[bool] = None,
     ) -> Optional[Tag]:
         """Update a tag's properties."""
@@ -171,6 +193,9 @@ class TagService:
         if description is not None:
             updates.append("description = ?")
             values.append(description)
+        if categories is not None:
+            updates.append("categories = ?")
+            values.append(json.dumps(categories) if categories else None)
         if is_active is not None:
             updates.append("is_active = ?")
             values.append(is_active)

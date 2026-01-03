@@ -21,6 +21,9 @@ def main():
 
     st.title("📋 Tags")
 
+    # Get available categories for dropdown
+    available_categories = market_service.get_distinct_categories()
+
     # Create new tag section
     with st.expander("➕ Create New Tag", expanded=False):
         with st.form("create_tag"):
@@ -29,6 +32,11 @@ def main():
                 "Description",
                 placeholder="Describe what kind of markets belong to this tag..."
             )
+            selected_categories = st.multiselect(
+                "Categories (optional)",
+                options=available_categories,
+                help="Only markets in selected categories will be classified for this tag. Leave empty for all categories."
+            )
 
             if st.form_submit_button("Create Tag", type="primary"):
                 if not name:
@@ -36,7 +44,11 @@ def main():
                 elif tag_service.get_tag_by_name(name):
                     st.error(f"Tag '{name}' already exists")
                 else:
-                    tag = tag_service.create_tag(name, description)
+                    tag = tag_service.create_tag(
+                        name,
+                        description,
+                        categories=selected_categories if selected_categories else None
+                    )
                     st.success(f"Created tag: {tag.name}")
                     st.rerun()
 
@@ -80,6 +92,11 @@ def main():
                 else:
                     st.caption("*No description*")
 
+                if tag.categories:
+                    st.caption(f"📂 Categories: {', '.join(tag.categories)}")
+                else:
+                    st.caption("📂 Categories: *All*")
+
             with col2:
                 st.metric("Training Examples", tag.example_count)
                 st.caption(f"✅ {tag.positive_count} pos | ❌ {tag.negative_count} neg")
@@ -110,6 +127,12 @@ def main():
                 with st.form(f"edit_form_{tag.tag_id}"):
                     new_name = st.text_input("Name", value=tag.name)
                     new_desc = st.text_area("Description", value=tag.description or "")
+                    new_categories = st.multiselect(
+                        "Categories",
+                        options=available_categories,
+                        default=tag.categories,
+                        help="Only markets in selected categories will be classified for this tag. Leave empty for all categories."
+                    )
 
                     col1, col2 = st.columns(2)
                     with col1:
@@ -117,7 +140,8 @@ def main():
                             tag_service.update_tag(
                                 tag.tag_id,
                                 name=new_name,
-                                description=new_desc
+                                description=new_desc,
+                                categories=new_categories if new_categories else []
                             )
                             st.session_state[f"editing_{tag.tag_id}"] = False
                             st.rerun()

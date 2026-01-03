@@ -90,11 +90,18 @@ class MarketService:
         tag_id: int,
         limit: int = 10,
         after_market_id: Optional[int] = None,
+        categories: Optional[list[str]] = None,
     ) -> list[Market]:
         """
         Get markets that haven't been tagged or judged for a specific tag.
 
         Returns markets in order by market_id for consistent cursor-based pagination.
+
+        Args:
+            tag_id: The tag to get markets for
+            limit: Maximum number of markets to return
+            after_market_id: Only return markets with ID greater than this
+            categories: Optional list of categories to filter by
         """
         sql = """
             SELECT m.market_id, m.condition_id, m.question, m.description,
@@ -111,6 +118,11 @@ class MarketService:
             )
         """
         params = [tag_id, tag_id, tag_id]
+
+        if categories:
+            placeholders = ", ".join(["?" for _ in categories])
+            sql += f" AND m.category IN ({placeholders})"
+            params.extend(categories)
 
         if after_market_id is not None:
             sql += " AND m.market_id > ?"
@@ -183,6 +195,18 @@ class MarketService:
             'positive': positive,
             'negative': negative,
         }
+
+    def get_distinct_categories(self) -> list[str]:
+        """Get all distinct non-null categories from markets."""
+        rows = self.conn.execute(
+            """
+            SELECT DISTINCT category
+            FROM MarketDim
+            WHERE category IS NOT NULL
+            ORDER BY category
+            """
+        ).fetchall()
+        return [r[0] for r in rows]
 
     def _row_to_market(self, row) -> Market:
         """Convert a database row to a Market object."""

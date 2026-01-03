@@ -4,7 +4,7 @@ History Page - View and edit recent classifications for fine-tuning.
 
 import streamlit as st
 from tag_manager.db import get_connection
-from tag_manager.services import TagService, JudgeService
+from tag_manager.services import TagService, JudgeService, MarketService
 
 st.set_page_config(page_title="History", page_icon="📜", layout="wide")
 
@@ -18,6 +18,7 @@ def main():
     init_state()
     tag_service = TagService(st.session_state.db_conn)
     judge_service = JudgeService(st.session_state.db_conn)
+    market_service = MarketService(st.session_state.db_conn)
 
     st.title("📜 Classification History")
     st.markdown("Review and edit past classifications to improve future results.")
@@ -30,7 +31,7 @@ def main():
     )
 
     # Filters
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
 
     with col1:
         tags = tag_service.list_tags()
@@ -42,20 +43,29 @@ def main():
         )
 
     with col2:
+        available_categories = market_service.get_distinct_categories()
+        category_options = ["All"] + available_categories
+        selected_category = st.selectbox(
+            "Category",
+            options=category_options,
+            index=0
+        )
+
+    with col3:
         decision_filter = st.selectbox(
             "Decision",
             options=["All", "Positive", "Negative", "Pending"],
             index=0
         )
 
-    with col3:
+    with col4:
         source_filter = st.selectbox(
             "Source",
             options=["All", "LLM Consensus", "Human"],
             index=0
         )
 
-    with col4:
+    with col5:
         limit = st.selectbox("Show", [10, 25, 50, 100], index=0)
 
     tag_id = selected_tag.tag_id if selected_tag else None
@@ -67,6 +77,7 @@ def main():
         search_query=search_query if search_query else None,
         decision_filter=decision_filter if decision_filter != "All" else None,
         source_filter=source_filter if source_filter != "All" else None,
+        category_filter=selected_category if selected_category != "All" else None,
     )
 
     if not history:
