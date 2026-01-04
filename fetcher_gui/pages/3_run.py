@@ -88,7 +88,8 @@ def main():
             "Markets Only",
             "Trades (Market Dim)",
             "Trades (Leaderboard)",
-            "Prices (New Markets)"
+            "Prices (New Markets)",
+            "Gamma Markets"
         ])
 
         # Tab: Everything
@@ -221,6 +222,33 @@ def main():
             if st.button("Run Prices", type="primary", use_container_width=True, key="run_prices"):
                 if run_manager.start(RunMode.PRICES, fresh=prices_fresh):
                     st.success("Started prices run!")
+                    st.rerun()
+                else:
+                    st.error("Failed to start run")
+
+        # Tab: Gamma Markets
+        with run_tabs[5]:
+            st.markdown("""
+            **Gamma Markets**
+
+            Fetches extended market data from the Gamma API including:
+            - Full market details with additional metadata
+            - Nested events (extracted to separate table)
+            - Nested categories (extracted to separate table)
+
+            This data provides richer market information than the CLOB API.
+
+            Note: Uses a completion cursor - once completed, use Fresh Start to re-fetch.
+            """)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                gamma_fresh = st.checkbox("Fresh Start", key="gamma_fresh",
+                    help="Clear gamma cursor and start from scratch")
+
+            if st.button("Run Gamma Markets", type="primary", use_container_width=True, key="run_gamma"):
+                if run_manager.start(RunMode.GAMMA, fresh=gamma_fresh):
+                    st.success("Started gamma markets run!")
                     st.rerun()
                 else:
                     st.error("Failed to start run")

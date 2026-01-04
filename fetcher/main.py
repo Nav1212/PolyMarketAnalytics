@@ -119,9 +119,9 @@ def main():
     parser = argparse.ArgumentParser(description="Polymarket Data Fetcher")
     parser.add_argument(
         "--mode",
-        choices=["all", "trades", "markets", "prices", "leaderboard"],
+        choices=["all", "trades", "markets", "prices", "leaderboard", "gamma"],
         default="all",
-        help="Fetch mode: all (full pipeline), trades, markets, prices, or leaderboard"
+        help="Fetch mode: all (full pipeline), trades, markets, prices, leaderboard, or gamma"
     )
     parser.add_argument(
         "--limit",
@@ -281,25 +281,52 @@ def main():
         elif args.mode == "leaderboard":
             print("Querying inactive markets from DuckDB...")
             market_ids = get_inactive_markets_from_db(end_time, limit=args.limit)
-            
+
             if not market_ids:
                 print("No inactive markets found in database!")
                 return
-            
+
             print(f"Found {len(market_ids)} markets for leaderboard fetch")
             print(f"Leaderboard Workers: {config.workers.leaderboard}")
             print()
-            
+
             leaderboard_queue = coordinator.run_leaderboard()
-            
+
             print("Leaderboard fetcher started. Waiting for completion...")
             completed = coordinator.wait_for_completion(timeout=args.timeout)
-            
+
             if completed:
                 print(f"\n✓ Fetched {leaderboard_queue.qsize()} leaderboard entries")
             else:
                 print(f"\n⚠ Timeout reached, {leaderboard_queue.qsize()} entries fetched so far")
-        
+
+        elif args.mode == "gamma":
+            # Run Gamma Market Fetcher
+            from fetcher.workers.gamma_market_fetcher import GammaMarketFetcher
+
+            print(f"Gamma Market Workers: {config.workers.gamma_market}")
+            print()
+
+            # Check if already completed
+            if cursor_manager.get_gamma_market_cursor().completed:
+                print("Gamma markets already completed. Use --fresh to re-fetch.")
+                return
+
+            with GammaMarketFetcher(config=config) as fetcher:
+                result = fetcher.fetch_all_markets_to_parquet(
+                    market_output_dir=config.output_dirs.gamma_market,
+                    event_output_dir=config.output_dirs.gamma_event,
+                    category_output_dir=config.output_dirs.gamma_category,
+                    market_threshold=config.queues.gamma_market_threshold,
+                    event_threshold=config.queues.gamma_event_threshold,
+                    category_threshold=config.queues.gamma_category_threshold,
+                )
+
+            print(f"\n✓ Gamma fetch complete:")
+            print(f"  Markets: {result['markets']}")
+            print(f"  Events: {result['events']}")
+            print(f"  Categories: {result['categories']}")
+
         # Print rate limit timing statistics
         print("\n" + "=" * 60)
         print("Rate Limit Statistics:")

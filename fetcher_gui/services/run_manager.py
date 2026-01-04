@@ -24,6 +24,7 @@ class RunMode(str, Enum):
     TRADES_LEADERBOARD = "trades_leaderboard"
     PRICES = "prices"
     LEADERBOARD = "leaderboard"
+    GAMMA = "gamma"
 
 
 class RunStatus(str, Enum):
