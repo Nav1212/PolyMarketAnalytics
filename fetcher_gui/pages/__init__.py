@@ -1,0 +1,1 @@
+"""Fetcher GUI Pages."""
