@@ -1,0 +1,21 @@
+# Language detection overrides for GitHub Linguist
+
+# Mark Roff/documentation files as documentation (won't count toward language stats)
+*.1 linguist-documentation
+*.man linguist-documentation
+*.roff linguist-documentation
+
+# Common documentation patterns
+docs/** linguist-documentation
+ProofofConcept/** linguist-documentation
+
+# Vendor dependencies (if any)
+venv/** linguist-vendored
+env/** linguist-vendored
+*.egg-info/** linguist-vendored
+
+# Mark Jupyter notebooks as documentation (optional - remove if you want them counted)
+# *.ipynb linguist-documentation
+
+# Ensure Python is properly detected
+*.py linguist-detectable
