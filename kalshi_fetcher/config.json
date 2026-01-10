@@ -1,0 +1,42 @@
+{
+    "rate_limits": {
+        "event": 100,
+        "market": 100,
+        "trade": 70,
+        "orderbook": 100,
+        "window_seconds": 10.0
+    },
+    "queues": {
+        "event_threshold": 1000,
+        "market_threshold": 5000,
+        "trade_threshold": 10000,
+        "orderbook_threshold": 5000
+    },
+    "output_dirs": {
+        "event": "data/kalshi/events",
+        "market": "data/kalshi/markets",
+        "trade": "data/kalshi/trades",
+        "orderbook": "data/kalshi/orderbook"
+    },
+    "api": {
+        "base_url": "https://api.elections.kalshi.com/trade-api/v2",
+        "timeout": 30.0,
+        "connect_timeout": 10.0
+    },
+    "workers": {
+        "event": 1,
+        "market": 2,
+        "trade": 2,
+        "orderbook": 1
+    },
+    "cursors": {
+        "enabled": true,
+        "filename": "kalshi_cursor.json"
+    },
+    "retry": {
+        "max_attempts": 3,
+        "base_delay": 1.0,
+        "max_delay": 30.0,
+        "exponential_base": 2.0
+    }
+}
