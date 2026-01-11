@@ -6,6 +6,7 @@ Runs the same classification prompt across multiple models and aggregates votes.
 
 import json
 import logging
+import threading
 from typing import Optional
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -77,6 +78,7 @@ class JudgePool:
         ollama_config: Optional[OllamaConfig] = None,
         require_unanimous: Optional[bool] = None,
         min_votes_for_majority: Optional[int] = None,
+        ollama_concurrency: Optional[int] = None,
     ):
         self.client = OllamaClient(ollama_config)
 
@@ -95,7 +97,13 @@ class JudgePool:
             self.require_unanimous = require_unanimous
             self.min_votes_for_majority = min_votes_for_majority
 
-        logger.info(f"JudgePool initialized with models: {self.models}")
+        # Load ollama concurrency setting (limits concurrent GPU requests)
+        if ollama_concurrency is None:
+            ollama_concurrency = self._get_default_ollama_concurrency()
+        self.ollama_concurrency = ollama_concurrency
+        self._gpu_semaphore = threading.Semaphore(self.ollama_concurrency)
+
+        logger.info(f"JudgePool initialized with models: {self.models}, GPU concurrency: {self.ollama_concurrency}")
 
     def _get_default_models(self) -> list[str]:
         """Get default models - from persistent storage, session state, or auto-detect."""
@@ -140,11 +148,24 @@ class JudgePool:
             pass
         return False, 2  # Default values
 
+    def _get_default_ollama_concurrency(self) -> int:
+        """Get default Ollama GPU concurrency from persistent storage."""
+        try:
+            from tag_manager.db import get_connection
+            from tag_manager.services import SettingsService
+            conn = get_connection()
+            settings = SettingsService(conn)
+            return settings.get_ollama_concurrency()
+        except Exception:
+            pass
+        return 2  # Default value
+
     def update_settings(
         self,
         models: Optional[list[str]] = None,
         require_unanimous: Optional[bool] = None,
         min_votes_for_majority: Optional[int] = None,
+        ollama_concurrency: Optional[int] = None,
     ):
         """Update pool settings dynamically."""
         if models is not None:
@@ -154,6 +175,10 @@ class JudgePool:
             self.require_unanimous = require_unanimous
         if min_votes_for_majority is not None:
             self.min_votes_for_majority = min_votes_for_majority
+        if ollama_concurrency is not None and ollama_concurrency != self.ollama_concurrency:
+            self.ollama_concurrency = ollama_concurrency
+            self._gpu_semaphore = threading.Semaphore(ollama_concurrency)
+            logger.info(f"Updated GPU concurrency to: {self.ollama_concurrency}")
 
     def classify(
         self,
@@ -211,32 +236,33 @@ class JudgePool:
         return self._aggregate_results(results)
 
     def _classify_single(self, model: str, prompt: str) -> JudgeResult:
-        """Run classification on a single model."""
-        try:
-            logger.debug(f"Classifying with model: {model}")
-            response = self.client.generate(
-                model=model,
-                prompt=prompt,
-                temperature=0.1,
-                max_tokens=10,
-            )
+        """Run classification on a single model (throttled by GPU semaphore)."""
+        with self._gpu_semaphore:
+            try:
+                logger.debug(f"Classifying with model: {model}")
+                response = self.client.generate(
+                    model=model,
+                    prompt=prompt,
+                    temperature=0.1,
+                    max_tokens=10,
+                )
 
-            vote = self._parse_response(response)
-            logger.debug(f"Model {model} response: '{response}' -> vote: {vote}")
+                vote = self._parse_response(response)
+                logger.debug(f"Model {model} response: '{response}' -> vote: {vote}")
 
-            return JudgeResult(
-                model=model,
-                vote=vote,
-                raw_response=response,
-            )
-        except Exception as e:
-            logger.error(f"Error with model {model}: {e}")
-            return JudgeResult(
-                model=model,
-                vote=None,
-                raw_response="",
-                error=str(e)
-            )
+                return JudgeResult(
+                    model=model,
+                    vote=vote,
+                    raw_response=response,
+                )
+            except Exception as e:
+                logger.error(f"Error with model {model}: {e}")
+                return JudgeResult(
+                    model=model,
+                    vote=None,
+                    raw_response="",
+                    error=str(e)
+                )
 
     def _build_prompt(
         self,

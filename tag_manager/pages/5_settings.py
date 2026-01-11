@@ -45,6 +45,13 @@ def init_state():
     if "min_votes_for_majority" not in st.session_state:
         settings = st.session_state.settings_service
         st.session_state.min_votes_for_majority = settings.get_min_votes_for_majority()
+    # Load parallelization settings
+    if "parallel_workers" not in st.session_state:
+        settings = st.session_state.settings_service
+        st.session_state.parallel_workers = settings.get_parallel_workers()
+    if "ollama_concurrency" not in st.session_state:
+        settings = st.session_state.settings_service
+        st.session_state.ollama_concurrency = settings.get_ollama_concurrency()
 
 
 def refresh_models():
@@ -65,6 +72,14 @@ def save_consensus_settings(require_unanimous: bool, min_votes: int):
     st.session_state.min_votes_for_majority = min_votes
     st.session_state.settings_service.set_require_unanimous(require_unanimous)
     st.session_state.settings_service.set_min_votes_for_majority(min_votes)
+
+
+def save_parallelization_settings(parallel_workers: int, ollama_concurrency: int):
+    """Save parallelization settings to both session state and persistent storage."""
+    st.session_state.parallel_workers = parallel_workers
+    st.session_state.ollama_concurrency = ollama_concurrency
+    st.session_state.settings_service.set_parallel_workers(parallel_workers)
+    st.session_state.settings_service.set_ollama_concurrency(ollama_concurrency)
 
 
 def install_model(model_name: str) -> bool:
@@ -291,6 +306,37 @@ def main():
         if st.button("💾 Save Consensus Settings"):
             save_consensus_settings(require_unanimous, min_votes)
             st.success("Consensus settings saved!")
+
+        st.divider()
+
+        # Parallelization settings
+        st.markdown("### Parallelization Settings")
+        st.caption("Control how many classifications run in parallel")
+
+        # Load current values from session state
+        current_parallel_workers = st.session_state.get("parallel_workers", 2)
+        current_ollama_concurrency = st.session_state.get("ollama_concurrency", 2)
+
+        parallel_workers = st.slider(
+            "Parallel Workers",
+            min_value=1,
+            max_value=8,
+            value=current_parallel_workers,
+            help="Number of worker threads processing markets in parallel. Higher = faster but more resource usage."
+        )
+
+        ollama_concurrency = st.slider(
+            "Ollama GPU Concurrency",
+            min_value=1,
+            max_value=4,
+            value=current_ollama_concurrency,
+            help="Maximum concurrent requests to Ollama. Limited by GPU memory. Start with 2, increase if you have a powerful GPU."
+        )
+
+        # Save button for parallelization settings
+        if st.button("💾 Save Parallelization Settings"):
+            save_parallelization_settings(parallel_workers, ollama_concurrency)
+            st.success("Parallelization settings saved! Restart background classifier to apply.")
 
         st.divider()
 

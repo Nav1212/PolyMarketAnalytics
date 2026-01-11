@@ -22,6 +22,8 @@ class SettingsService:
     SELECTED_MODELS = "selected_models"
     REQUIRE_UNANIMOUS = "require_unanimous"
     MIN_VOTES_FOR_MAJORITY = "min_votes_for_majority"
+    PARALLEL_WORKERS = "parallel_workers"
+    OLLAMA_CONCURRENCY = "ollama_concurrency"
 
     def __init__(self, conn: duckdb.DuckDBPyConnection):
         self.conn = conn
@@ -141,3 +143,19 @@ class SettingsService:
     def set_min_votes_for_majority(self, value: int) -> None:
         """Set minimum votes needed for majority consensus."""
         self.set(self.MIN_VOTES_FOR_MAJORITY, value)
+
+    def get_parallel_workers(self) -> int:
+        """Get number of parallel worker threads for classification."""
+        return self.get(self.PARALLEL_WORKERS, default=2)
+
+    def set_parallel_workers(self, value: int) -> None:
+        """Set number of parallel worker threads for classification."""
+        self.set(self.PARALLEL_WORKERS, max(1, min(value, 8)))
+
+    def get_ollama_concurrency(self) -> int:
+        """Get maximum concurrent Ollama GPU requests."""
+        return self.get(self.OLLAMA_CONCURRENCY, default=2)
+
+    def set_ollama_concurrency(self, value: int) -> None:
+        """Set maximum concurrent Ollama GPU requests."""
+        self.set(self.OLLAMA_CONCURRENCY, max(1, min(value, 8)))

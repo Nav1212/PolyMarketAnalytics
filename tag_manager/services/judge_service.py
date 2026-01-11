@@ -3,9 +3,11 @@ Judge service for managing LLM-based market classification.
 """
 
 import json
+import logging
 import threading
 import time
 from datetime import datetime
+from queue import Queue, Empty
 from typing import Optional, Callable
 from dataclasses import dataclass
 import duckdb
@@ -13,6 +15,8 @@ import duckdb
 from tag_manager.llm.judge_pool import JudgePool, PoolResult
 from tag_manager.services.tag_service import TagService
 from tag_manager.services.market_service import MarketService
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -436,6 +440,8 @@ class JudgeService:
 class BackgroundClassifier:
     """
     Background classifier that automatically processes new markets for all active tags.
+    
+    Uses a queue-based worker pool for parallel classification.
 
     Usage:
         classifier = BackgroundClassifier(db_path)
@@ -449,6 +455,7 @@ class BackgroundClassifier:
         db_path: str,
         poll_interval: int = 60,
         batch_size: int = 10,
+        num_workers: Optional[int] = None,
     ):
         """
         Initialize the background classifier.
@@ -456,16 +463,35 @@ class BackgroundClassifier:
         Args:
             db_path: Path to the DuckDB database
             poll_interval: Seconds between classification runs
-            batch_size: Number of markets to classify per tag per run
+            batch_size: Number of markets to queue per tag per run
+            num_workers: Number of parallel worker threads (default from settings)
         """
         self.db_path = db_path
         self.poll_interval = poll_interval
         self.batch_size = batch_size
+        self._num_workers = num_workers  # Will be loaded from settings if None
         self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._coordinator_thread: Optional[threading.Thread] = None
+        self._worker_threads: list[threading.Thread] = []
+        self._work_queue: Queue[tuple[int, int]] = Queue()  # (tag_id, market_id)
         self._is_running = False
         self._last_run: Optional[datetime] = None
         self._markets_classified = 0
+        self._lock = threading.Lock()
+
+    def _get_num_workers(self) -> int:
+        """Get number of workers from settings or use provided value."""
+        if self._num_workers is not None:
+            return self._num_workers
+        try:
+            from tag_manager.services.settings_service import SettingsService
+            conn = duckdb.connect(self.db_path)
+            settings = SettingsService(conn)
+            num = settings.get_parallel_workers()
+            conn.close()
+            return num
+        except Exception:
+            return 2  # Default
 
     @property
     def is_running(self) -> bool:
@@ -479,42 +505,76 @@ class BackgroundClassifier:
     def markets_classified(self) -> int:
         return self._markets_classified
 
+    @property
+    def queue_size(self) -> int:
+        """Get current number of items in the work queue."""
+        return self._work_queue.qsize()
+
     def start(self):
-        """Start the background classification thread."""
-        if self._thread and self._thread.is_alive():
+        """Start the background classification with worker pool."""
+        if self._coordinator_thread and self._coordinator_thread.is_alive():
             return
 
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
+        
+        # Get number of workers
+        num_workers = self._get_num_workers()
+        logger.info(f"Starting BackgroundClassifier with {num_workers} workers")
+
+        # Start worker threads
+        self._worker_threads = []
+        for i in range(num_workers):
+            t = threading.Thread(
+                target=self._worker_loop,
+                args=(i,),
+                daemon=True,
+                name=f"ClassifierWorker-{i}"
+            )
+            t.start()
+            self._worker_threads.append(t)
+
+        # Start coordinator thread
+        self._coordinator_thread = threading.Thread(
+            target=self._coordinator_loop,
+            daemon=True,
+            name="ClassifierCoordinator"
+        )
+        self._coordinator_thread.start()
         self._is_running = True
 
     def stop(self):
-        """Stop the background classification thread."""
+        """Stop the background classification (waits for workers to finish current task)."""
+        logger.info("Stopping BackgroundClassifier...")
         self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=5)
+        
+        # Wait for workers to finish their current task
+        for t in self._worker_threads:
+            t.join(timeout=30)  # Give workers time to finish current classification
+        
+        if self._coordinator_thread:
+            self._coordinator_thread.join(timeout=5)
+        
+        self._worker_threads = []
         self._is_running = False
+        logger.info("BackgroundClassifier stopped")
 
-    def _run_loop(self):
-        """Main classification loop."""
+    def _coordinator_loop(self):
+        """Main coordinator loop - enqueues work for workers."""
         while not self._stop_event.is_set():
             try:
-                self._classify_round()
+                self._enqueue_work()
                 self._last_run = datetime.now()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Error in coordinator loop: {e}")
 
             self._stop_event.wait(self.poll_interval)
 
-        self._is_running = False
-
-    def _classify_round(self):
-        """Run one round of classification for all active tags."""
+    def _enqueue_work(self):
+        """Enumerate pending markets and add to work queue."""
         conn = duckdb.connect(self.db_path)
         try:
-            judge_service = JudgeService(conn)
             tag_service = TagService(conn)
+            market_service = MarketService(conn)
 
             tags = tag_service.list_tags(active_only=True)
 
@@ -528,7 +588,7 @@ class BackgroundClassifier:
                 if tag.all_checked:
                     continue
 
-                markets = judge_service.market_service.get_markets_for_tagging(
+                markets = market_service.get_markets_for_tagging(
                     tag_id=tag.tag_id,
                     limit=self.batch_size,
                     after_market_id=tag.last_checked_market_id
@@ -537,13 +597,41 @@ class BackgroundClassifier:
                 for market in markets:
                     if self._stop_event.is_set():
                         break
+                    self._work_queue.put((tag.tag_id, market.market_id))
 
-                    try:
-                        judge_service.classify_market(tag.tag_id, market.market_id)
-                        self._markets_classified += 1
-                    except Exception:
-                        pass
-
-            judge_service.close()
+        except Exception as e:
+            logger.error(f"Error enqueuing work: {e}")
         finally:
             conn.close()
+
+    def _worker_loop(self, worker_id: int):
+        """Worker loop - processes items from the work queue."""
+        # Each worker gets its own connection for thread safety
+        conn = duckdb.connect(self.db_path)
+        judge_service = JudgeService(conn)
+        
+        logger.info(f"Worker {worker_id} started")
+        
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    # Get work item with timeout to check stop event periodically
+                    tag_id, market_id = self._work_queue.get(timeout=1.0)
+                except Empty:
+                    continue
+
+                try:
+                    judge_service.classify_market(tag_id, market_id)
+                    with self._lock:
+                        self._markets_classified += 1
+                    logger.debug(f"Worker {worker_id} classified market {market_id} for tag {tag_id}")
+                except Exception as e:
+                    logger.error(f"Worker {worker_id} error classifying market {market_id}: {e}")
+                    # Continue processing next item
+                finally:
+                    self._work_queue.task_done()
+
+        finally:
+            judge_service.close()
+            conn.close()
+            logger.info(f"Worker {worker_id} stopped")
