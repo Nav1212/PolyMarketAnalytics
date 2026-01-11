@@ -154,7 +154,29 @@ The Tag Manager provides:
 - **Examples Page**: Add training examples for classifications
 - **Judge Page**: Human review queue for LLM classification results
 - **History Page**: View and edit past classifications
-- **Settings Page**: Configure LLM models (Ollama integration)
+- **Settings Page**: Configure LLM models, consensus settings, and parallelization
+
+### LLM Classification Parallelization
+
+The Tag Manager uses a **multi-threaded worker pool** for faster market classification:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Parallel Workers | 2 | Worker threads processing markets concurrently |
+| Ollama GPU Concurrency | 2 | Max concurrent requests to Ollama (GPU memory limited) |
+
+Configure these in **Settings → Classification Settings → Parallelization Settings**.
+
+**Architecture:**
+```
+Coordinator Thread → Work Queue → Worker Pool (N threads)
+                         ↓
+                   JudgePool (per worker)
+                         ↓
+                   GPU Semaphore (throttles Ollama)
+```
+
+Workers finish their current classification on shutdown (graceful stop).
 
 ## Data Schema
 

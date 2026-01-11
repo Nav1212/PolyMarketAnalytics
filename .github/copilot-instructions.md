@@ -129,3 +129,44 @@ def fetch_data(self):
 - **DuckDB**: Silver layer storage at `PolyMarketData/silver.duckdb`
 - **httpx**: HTTP client with timeout handling
 - **pyarrow**: Parquet serialization
+
+## Tag Manager (LLM Classification)
+
+### Architecture
+The Tag Manager uses Ollama for LLM-based market classification with a multi-model voting system.
+
+```
+BackgroundClassifier (Coordinator) → Work Queue → Worker Pool (N threads)
+                                          ↓
+                                    JudgeService (per worker, own DB connection)
+                                          ↓
+                                    JudgePool → ThreadPoolExecutor (parallel models)
+                                          ↓
+                                    GPU Semaphore (throttles Ollama requests)
+```
+
+### Parallelization Settings
+Configured via `SettingsService` (persisted in DuckDB `Settings` table):
+
+| Setting | Key | Default | Description |
+|---------|-----|---------|-------------|
+| Parallel Workers | `parallel_workers` | 2 | Worker threads processing markets |
+| GPU Concurrency | `ollama_concurrency` | 2 | Max concurrent Ollama requests |
+
+```python
+from tag_manager.services import SettingsService
+settings = SettingsService(conn)
+settings.get_parallel_workers()  # Default: 2
+settings.get_ollama_concurrency()  # Default: 2
+```
+
+### Key Classes
+- **`BackgroundClassifier`** (`judge_service.py`): Queue-based worker pool for background classification
+- **`JudgePool`** (`llm/judge_pool.py`): Multi-model voting with GPU semaphore throttling
+- **`SettingsService`** (`services/settings_service.py`): Persistent settings storage
+
+### Graceful Shutdown
+Workers finish their current classification before stopping:
+```python
+classifier.stop()  # Sets stop event, waits for workers to complete current task
+```
